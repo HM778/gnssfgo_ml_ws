@@ -1,0 +1,64 @@
+<launch>
+    <arg name="binddcp_terminal_prefix" default="x-terminal-emulator -T binddcp -e" />
+
+    <node name="gnssfgo" pkg="gnssfgo" type="trbin_node" output="screen" launch-prefix="$(arg binddcp_terminal_prefix)">
+        <param name="hotstart_enable" value="false" />
+        <param name="GPS/BDS_only" value="false" />
+        <param name="wls_llh_topic" value="/trbin/psr_llh" />
+        <param name="wls_enu_topic" value="/trbin/psr_enu" />
+        <param name="fgo_llh_topic" value="/trbin/fgo_llh" />
+        <param name="fgo_enu_topic" value="/trbin/fgo_enu" />
+        <param name="output_file" value="c099.csv" />
+        <param name="windowSize" value="10" />
+        <param name="marginal_enable" value="false" />
+        <param name="history_epoch_window" value="200" />
+        <param name="max_running_time_ms" value="50.0" />
+        <param name="same_time_weight" value="false" />
+        <param name="same_reliable" value="false" />
+    </node>
+
+
+    <node name="ground_truth" pkg="gnssfgo" type="ground_truth_node" output="screen">
+        <param name="input_topic" value="/ublox_driver/receiver_pvt" />
+        <param name="output_topic" value="/trbin/gt_enu" />
+        <param name="frame_id" value="map" />
+        <param name="recording" value="false"/>
+    </node>
+
+    <!-- Optional rosbag playback (start after nodes). -->
+    <arg name="play_bag" default="false" />
+    <!-- <arg name="bag_path" default="/home/nvidia/Work/proj1_ws/outdoor-gnss-01.bag" /> -->
+    <arg name="bag_path" default="/home/nvidia/Work/datasets/ublox_C099_2026-06-09-14-15-28.bag" />
+    <arg name="bag_rate" default="1.0" />
+    <arg name="bag_use_clock" default="true" />
+    <arg name="bag_delay" default="2.0" />
+    <arg name="bag_start_time" default="0.0" />
+    <arg name="bag_duration" default="1500.0" />
+    <arg name="bag_in_terminal" default="true" />
+    <arg name="bag_terminal_prefix" default="x-terminal-emulator -e" />
+
+    <group if="$(arg play_bag)">
+        <!-- Separate terminal (press SPACE to pause/resume rosbag play). -->
+        <node if="$(arg bag_in_terminal)"
+              name="rosbag_play"
+              pkg="gnssfgo"
+              type="rosbag_play_delayed.sh"
+              output="screen"
+              launch-prefix="$(arg bag_terminal_prefix)"
+              args="$(arg bag_delay) $(arg bag_rate) $(arg bag_start_time) $(arg bag_use_clock) $(arg bag_path) $(arg bag_duration)" />
+
+        <!-- Same terminal -->
+        <node unless="$(arg bag_in_terminal)"
+              name="rosbag_play"
+              pkg="gnssfgo"
+              type="rosbag_play_delayed.sh"
+              output="screen"
+              args="$(arg bag_delay) $(arg bag_rate) $(arg bag_start_time) $(arg bag_use_clock) $(arg bag_path) $(arg bag_duration)" />
+    </group>
+
+    <arg name="rviz" default="0" />
+    <group if="$(arg rviz)">
+        <env name="DISABLE_ROS1_EOL_WARNINGS" value="1" />
+	    <node  pkg="rviz" type="rviz" name="rviz" args="-d /home/nvidia/Work/gnssfgo_ws/trbin.rviz" />
+    </group>
+</launch>

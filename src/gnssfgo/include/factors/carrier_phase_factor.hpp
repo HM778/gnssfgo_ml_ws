@@ -1,0 +1,129 @@
+/*******************************************************
+
+ *******************************************************/
+
+#include <ceres/ceres.h>
+#include <algorithm>
+#include <cmath>
+#include <Eigen/Cholesky>
+#include <Eigen/Dense>
+#include <Eigen/QR>
+#include <gnss_comm/gnss_constant.hpp>
+#include <map>
+#include <utility>
+#include <vector>
+#include "../tools/gnss_comm_extra.h"
+#include "../tools/checking.hpp"
+#include "../datatype.h"
+using namespace gnss_comm;
+
+#define TIME_WEIGHT 0
+
+struct TRDDCPFactor
+{
+    TRDDCPFactor(TRRTKMeasurement dd_measurement,
+                std::map<int, sv_info> current_sv_info_map,
+                std::map<int, sv_info> reference_sv_info_map,
+                double sigma, int freq_idx = -1)
+                : dd_measurement(dd_measurement),
+                    current_sv_info_map(std::move(current_sv_info_map)),
+                    reference_sv_info_map(std::move(reference_sv_info_map)),
+                    sqrt_info(std::max(1e-3, sigma)), freq_idx(freq_idx) {}
+
+    template <typename T>
+    bool operator()(const T* prev_state, const T* curr_state, T* residuals) const
+    {
+        const auto* curr_master_sv_ptr = getSatelliteInfoPtr(current_sv_info_map, dd_measurement.u_master_SV);
+        const auto* curr_i_sv_ptr = getSatelliteInfoPtr(current_sv_info_map, dd_measurement.u_iSV);
+        const auto* prev_master_sv_ptr = getSatelliteInfoPtr(reference_sv_info_map, dd_measurement.r_master_SV);
+        const auto* prev_i_sv_ptr = getSatelliteInfoPtr(reference_sv_info_map, dd_measurement.r_iSV);
+
+        const sv_info& curr_master_sv = *curr_master_sv_ptr;
+        const sv_info& curr_i_sv = *curr_i_sv_ptr;
+        const sv_info& prev_master_sv = *prev_master_sv_ptr;
+        const sv_info& prev_i_sv = *prev_i_sv_ptr;
+
+        Eigen::Vector3d curr_master_pos(curr_master_sv.pos[0], curr_master_sv.pos[1], curr_master_sv.pos[2]);
+        Eigen::Vector3d curr_i_pos(curr_i_sv.pos[0], curr_i_sv.pos[1], curr_i_sv.pos[2]);
+        Eigen::Vector3d prev_master_pos(prev_master_sv.pos[0], prev_master_sv.pos[1], prev_master_sv.pos[2]);
+        Eigen::Vector3d prev_i_pos(prev_i_sv.pos[0], prev_i_sv.pos[1], prev_i_sv.pos[2]);
+
+        T est_prev_master = sqrt((prev_state[0] - T(prev_master_pos.x())) * (prev_state[0] - T(prev_master_pos.x())) +
+                                 (prev_state[1] - T(prev_master_pos.y())) * (prev_state[1] - T(prev_master_pos.y())) +
+                                 (prev_state[2] - T(prev_master_pos.z())) * (prev_state[2] - T(prev_master_pos.z())));
+        est_prev_master = est_prev_master + T(OMGE_ / CLIGHT_) *
+            (T(prev_master_pos.x()) * prev_state[1] - T(prev_master_pos.y()) * prev_state[0]);
+
+        T est_prev_i = sqrt((prev_state[0] - T(prev_i_pos.x())) * (prev_state[0] - T(prev_i_pos.x())) +
+                            (prev_state[1] - T(prev_i_pos.y())) * (prev_state[1] - T(prev_i_pos.y())) +
+                            (prev_state[2] - T(prev_i_pos.z())) * (prev_state[2] - T(prev_i_pos.z())));
+        est_prev_i = est_prev_i + T(OMGE_ / CLIGHT_) *
+            (T(prev_i_pos.x()) * prev_state[1] - T(prev_i_pos.y()) * prev_state[0]);
+
+        T est_curr_master = sqrt((curr_state[0] - T(curr_master_pos.x())) * (curr_state[0] - T(curr_master_pos.x())) +
+                                 (curr_state[1] - T(curr_master_pos.y())) * (curr_state[1] - T(curr_master_pos.y())) +
+                                 (curr_state[2] - T(curr_master_pos.z())) * (curr_state[2] - T(curr_master_pos.z())));
+        est_curr_master = est_curr_master + T(OMGE_ / CLIGHT_) *
+            (T(curr_master_pos.x()) * curr_state[1] - T(curr_master_pos.y()) * curr_state[0]);
+
+        T est_curr_i = sqrt((curr_state[0] - T(curr_i_pos.x())) * (curr_state[0] - T(curr_i_pos.x())) +
+                            (curr_state[1] - T(curr_i_pos.y())) * (curr_state[1] - T(curr_i_pos.y())) +
+                            (curr_state[2] - T(curr_i_pos.z())) * (curr_state[2] - T(curr_i_pos.z())));
+        est_curr_i = est_curr_i + T(OMGE_ / CLIGHT_) *
+            (T(curr_i_pos.x()) * curr_state[1] - T(curr_i_pos.y()) * curr_state[0]);
+
+        // 双差载波相位-估计值：这里是双时差双差，常值整周模糊度会相互消除，
+        // 因此不再单独引入 ambiguity state。
+        T est_dd_cp = (est_curr_i - est_prev_i) - (est_curr_master - est_prev_master);
+
+        T prev_master_cp(0), prev_i_cp(0), curr_master_cp(0), curr_i_cp(0);
+        double sigma_prev_master = 0.0, sigma_prev_i = 0.0, sigma_curr_master = 0.0, sigma_curr_i = 0.0;
+
+        auto trddcp_cp_m = [this](const gnss_comm::ObsPtr& o, const sv_info& sv) -> double {
+            if (freq_idx == -3) { double c = getIFCarrierPhase(o); return (c != 0.0) ? (c * sv.lamda) : 0.0; }
+            int li = -1; L1_freq(o, &li);
+            return (li >= 0 && li < (int)o->cp.size()) ? (o->cp[li] * sv.lamda) : 0.0;
+        };
+        auto trddcp_sigma = [this](const gnss_comm::ObsPtr& o, const std::map<int, sv_info>& smap) -> double {
+            if (freq_idx == -3) return 0.30;
+            return gnss_comm_extra::getVarofCp_ele_SNR(o, smap);
+        };
+
+        prev_master_cp = T(trddcp_cp_m(dd_measurement.r_master_SV, prev_master_sv));
+        prev_i_cp      = T(trddcp_cp_m(dd_measurement.r_iSV, prev_i_sv));
+        curr_master_cp = T(trddcp_cp_m(dd_measurement.u_master_SV, curr_master_sv));
+        curr_i_cp      = T(trddcp_cp_m(dd_measurement.u_iSV, curr_i_sv));
+        sigma_prev_master = trddcp_sigma(dd_measurement.r_master_SV, reference_sv_info_map);
+        sigma_prev_i      = trddcp_sigma(dd_measurement.r_iSV, reference_sv_info_map);
+        sigma_curr_master = trddcp_sigma(dd_measurement.u_master_SV, current_sv_info_map);
+        sigma_curr_i      = trddcp_sigma(dd_measurement.u_iSV, current_sv_info_map);
+        // 双差载波相位-观测值
+        T dd_cp = (curr_i_cp - prev_i_cp) - (curr_master_cp - prev_master_cp);
+
+        const double average_sigma = (sigma_prev_master + sigma_prev_i + sigma_curr_master + sigma_curr_i) / 4.0;
+        const double sigma = std::max(0.20, average_sigma);
+        if(0)
+        {
+            T x = T(sqrt_info - 0.5) * 10.0;  // 0→-5, 0.5→0, 1→5
+            T sigmoid = 1.0 / (1.0 + exp(-x));
+            // 再映射到 [1, 1000]
+            T conf = 1.0 + sigmoid * 999.0;
+            residuals[0] = T(est_dd_cp - dd_cp) * conf ;
+        }
+        else
+        {
+            residuals[0] = (T(est_dd_cp - dd_cp) / sigma ) * T(sqrt_info);
+        }
+        
+        // printf("sat_pair: %d & %d gap: %d|TRDDCP residuals: %f  | conf: %f\n",dd_measurement.u_master_SV->sat,dd_measurement.u_iSV->sat, dd_measurement.curr_epoch_index - dd_measurement.prev_epoch_index ,residuals[0], conf);
+        return true;
+    }
+
+    TRRTKMeasurement dd_measurement;
+    std::map<int, sv_info> current_sv_info_map;
+    std::map<int, sv_info> reference_sv_info_map;
+    double sqrt_info;
+    int freq_idx = -1;  // -1=L1, -2=L2
+};
+
+

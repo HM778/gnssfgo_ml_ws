@@ -1,0 +1,11 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "ROS: Launch gnssFGO Node",
+            "type": "ros",
+            "request": "launch",
+            "target": "/home/nvidia/Work/gnssfgo_ws/src/gnssfgo/launch/standard.launch"
+        }
+    ]
+}
