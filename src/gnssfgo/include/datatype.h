@@ -19,38 +19,26 @@ struct DDMeasurement
     gnss_comm::ObsPtr r_master_SV;
     gnss_comm::ObsPtr r_iSV;
 
+    int freq_idx;   //新增了L1/L2频段数据处理后，必须要区分频段
+
     double var_pr;
     double var_cp;
 };
 
-struct TRfeature{
-    //保存TR因子相关信息的结构体
-    double min_SNR;    
-    double max_SNR;   
-    double min_elev;    
-    double max_elev;    
-    double delta_elev;  
-    double delta_azm;      
-    double gap_epoch; // 时间间隔
-
-    double residual; // TR双差因子残差
-    double pred_move; // 预测的移动距离（用于时间折扣函数）
-};
-
-struct TRRTKMeasurement : DDMeasurement
+// 跨历元双差因子信息
+struct TRDDMeasurement : DDMeasurement
 {
-    /* the master satellite is found from user end*/
     int prev_epoch_index;
     int curr_epoch_index;
     double prev_time;
     double curr_time;
-   
-    TRfeature tr_feature; // 关联的TR因子信息
+
     double pred_move; // 预测的移动距离（用于时间折扣函数）
     double tr_score;
 };
 
 /**
+ * 卫星解析信息
  * 可用性
  * 卫星编码
  * 卫星系统
@@ -70,7 +58,7 @@ struct sv_info
     double ddt = 0.0;
     double azimuth = 0.0;
     double elevation = 0.0;
-    double lamda = 0.0;       // L1 wavelength (m)
+    double lamda_l1 = 0.0;    // L1 wavelength (m)
     double lamda_l2 = 0.0;    // L2 wavelength (m)
     double freq_l1 = 0.0;     // L1 frequency (Hz)
     double freq_l2 = 0.0;     // L2 frequency (Hz)

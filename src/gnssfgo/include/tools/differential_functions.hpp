@@ -130,68 +130,6 @@ void findSatellitewithSameId(double id, std::vector<gnss_comm::ObsPtr> gnss_data
     }
 }
 
-// 计算卫星连续锁定数
-/**
- * @brief find satellite lock count for TRRTK
- * 输入： gnss_data_map - GNSS数据映射
- * 输入： epoch - 当前历元索引
- * 输出： sv_lock_count_map - 卫星锁定计数映射
- */
-void findSVcountForTRRTK(std::map<double, std::vector<gnss_comm::ObsPtr>>& gnss_data_map, double epoch, std::map<int, int>& sv_lock_count_map, int freq_sel = -1)
-{
-    const auto& gnss_data = gnss_data_map[epoch];
-    for (const auto& obs : gnss_data)
-    {
-        int sat_id = obs->sat;
-        for (auto iter = gnss_data_map.rbegin(); iter != gnss_data_map.rend(); ++iter)
-        {
-            if(iter->first == epoch) continue;
-            else
-            {
-                const auto& past_gnss_data = iter->second;
-                int find_count = 0;
-                for (const auto& past_obs : past_gnss_data)
-                {
-                    find_count++;
-                    if (past_obs->sat == sat_id)
-                    {
-                        int freq_idx = -1;
-                        double lamda_d = 0.0, lamda_l2_d = 0.0;
-                        getFreqIndex(past_obs, freq_sel, freq_idx, lamda_d, lamda_l2_d);
-                        if (freq_idx >= 0 && past_obs->cp[freq_idx] >= 10)
-                        {
-                            sv_lock_count_map[sat_id]++;
-                            break;
-                        }
-                    }
-                }
-                // 未找到说明该卫星已经失锁或者没有连续的观测数据，跳出循环
-                if(find_count > past_gnss_data.size())
-                {
-                    break;
-                }
-            }
-        }
-    }
-}
 
-void findLockingSVForTRRTK(std::map<double, std::vector<gnss_comm::ObsPtr>>& gnss_data_map, double epoch, int locking_sat_no, gnss_comm::ObsPtr& ref_obs)
-{
-    if (gnss_data_map.find(epoch) == gnss_data_map.end())
-    {
-        return;
-    }
-    else
-    {
-        for(int i = 0; i < gnss_data_map[epoch].size(); i++)
-        {
-            if(gnss_data_map[epoch][i]->sat == locking_sat_no)
-            {
-                ref_obs = gnss_data_map[epoch][i];
-                break;
-            }
-        }
-    }
-}
 
 #endif // DIFFERENTIAL_FUNCTIONS_HPP

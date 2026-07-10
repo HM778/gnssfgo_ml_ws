@@ -21,7 +21,7 @@ using namespace gnss_comm;
 
 struct TRDDCPFactor
 {
-    TRDDCPFactor(TRRTKMeasurement dd_measurement,
+    TRDDCPFactor(TRDDMeasurement dd_measurement,
                 std::map<int, sv_info> current_sv_info_map,
                 std::map<int, sv_info> reference_sv_info_map,
                 double sigma, int freq_idx = -1)
@@ -119,7 +119,7 @@ struct TRDDCPFactor
         return true;
     }
 
-    TRRTKMeasurement dd_measurement;
+    TRDDMeasurement dd_measurement;
     std::map<int, sv_info> current_sv_info_map;
     std::map<int, sv_info> reference_sv_info_map;
     double sqrt_info;

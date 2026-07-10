@@ -106,7 +106,6 @@ public:
     // 是否启用边缘化
     bool marginal_enable = true;
 
-
     //保证时间同步
     gnss_comm::gtime_t current_sys_time;            //后处理时设置为星历时间
     double current_gpst_sec = -1.0;
@@ -124,9 +123,6 @@ public:
     ros::Publisher pub_psr_enu_latest;
     ros::Publisher pub_fgo_llh_latest;
     ros::Publisher pub_fgo_enu_latest;
-
-
-
 
     void StartSpinners()
     {
@@ -542,11 +538,12 @@ public:
 
     void gephem_cb(const gnss_comm::GnssGloEphemMsgConstPtr &gephem_msg)
     {
-        // Use the existing conversion helper from gnss_comm to parse GloEphem
+        if(PART_SATSYS)
+        {
+            return;
+        }
+        
         gnss_comm::GloEphemPtr ud_gephem = gnss_comm::msg2glo_ephem(gephem_msg);
-
-        // GLONASS satellite ID is already encoded by ublox_driver in RTKLIB format.
-        // Do NOT filter by PART_SATSYS here — GLO is always accepted.
 
         // --- get system time reference ---
         gnss_comm::gtime_t local_time;
@@ -621,6 +618,7 @@ public:
         return;
     }
 
+    // ENU original point set
     void origin_node_cb(const sensor_msgs::NavSatFixConstPtr &msg)
     {
         if (!msg)

@@ -116,8 +116,7 @@ public:
     bool has_marginalization_prior_ = false;
     double marginalization_prior_time_ = -1.0;
     std::array<double, state_size> marginalization_prior_mean_{};
-    Eigen::Matrix<double, state_size, state_size> marginalization_prior_sqrt_info_ =
-        Eigen::Matrix<double, state_size, state_size>::Identity();
+    Eigen::Matrix<double, state_size, state_size> marginalization_prior_sqrt_info_ = Eigen::Matrix<double, state_size, state_size>::Identity();
 
 protected:
     ceres::Problem::Options problem_options;
@@ -929,31 +928,6 @@ public:
                                                                 ));
                 problem.AddResidualBlock(ps_function, loss_function, state_array[epoch_idx]);
                 ++added_pseudorange_factor_count;
-            }
-
-            // IF pseudorange pass: ionosphere-free combination for dual-frequency satellites
-            // Single IF factor replaces L1+L2 pair, eliminates ionospheric delay, noise ~3x L1
-            const std::vector<gnss_comm_extra::CorrectedPseudorangeMeasurement> if_measurements =
-                gnss_comm_extra::buildIFPseudorangeMeasurements(
-                    epoch_gnss_data, epoch_ephems, state_guess, has_state_guess);
-            for (const auto &measurement : if_measurements)
-            {
-                if (!measurement.valid || measurement.sat_sys == "Unknown") continue;
-                ceres::CostFunction* ps_function = new ceres::AutoDiffCostFunction<pseudorangeFactor, 1
-                                                                , state_size>(new pseudorangeFactor(
-                                                                    measurement.sat_sys,
-                                                                    measurement.sat_pos.x(),
-                                                                    measurement.sat_pos.y(),
-                                                                    measurement.sat_pos.z(),
-                                                                    measurement.pseudorange,
-                                                                    measurement.sigma,
-                                                                    measurement.sv_dt_sec,
-                                                                    measurement.tgd_sec,
-                                                                    measurement.ion_delay_m,
-                                                                    measurement.tro_delay_m));
-                problem.AddResidualBlock(ps_function, loss_function, state_array[epoch_idx]);
-                ++added_pseudorange_factor_count;
-                ++if_psr_count;
             }
         }
         printf("[  PSR   FACTOR] Added %d (L1=%d IF=%d).\n", added_pseudorange_factor_count,

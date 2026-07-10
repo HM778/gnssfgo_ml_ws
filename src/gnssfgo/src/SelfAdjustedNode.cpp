@@ -1,13 +1,13 @@
 #include "ProcessingNodeExtra.hpp"
 
-#include "../include/models/trbin_factorgraph.hpp"
+#include "../include/models/SelfAdjustedFactorGraph.hpp"
 #include "../include/tools/tic_toc.h"
 
 #include <atomic>
 #include <chrono>
 #include <mutex>
 
-class TRBinning : public ProcessingNodeExtra
+class SelfAdjustedTR : public ProcessingNodeExtra
 {
     TicToc OptTime;
 
@@ -15,7 +15,7 @@ class TRBinning : public ProcessingNodeExtra
     Eigen::Vector3d cov_enu;
     
     std::thread optimizationThread;
-    std::thread historyUpdateThread;
+
     double last_ingested_time_frame = -1.0;
     std::map<int, sv_info> last_sv_info_map;
     double max_running_time_ms;
@@ -29,27 +29,24 @@ class TRBinning : public ProcessingNodeExtra
 
     
 private:
-    BinningFactorGraph factor_graph;
+    SelfAdjustedFactorGraph factor_graph;
 
 
 public:
-    TRBinning() 
+    SelfAdjustedTR() 
     {   
         // Initialization
         current_sys_time.sec = -1;
 
         // params setting
         loadParams();
-        nh.param<int>("history_epoch_window", factor_graph.recent_history_epoch_window, 0);
         nh.param<double>("max_running_time_ms",max_running_time_ms,50.0);
 
         nh.param<bool>("same_time_weight", SAME_TIME_WEIGHT, false);
         nh.param<bool>("same_reliable", SAME_RELIABLE, false);
         
-        ROS_INFO("Set recent_history_epoch_window to %d", factor_graph.recent_history_epoch_window);
         ROS_ERROR("Set time_dicount/reliable method: %d / %d", SAME_TIME_WEIGHT,SAME_RELIABLE);
         factor_graph.windowSize = windowSize;
-        // factor_graph.FactorGraph::windowSize = windowSize;
         factor_graph.MARGINAL_ENABLE = marginal_enable;
         factor_graph.SAME_RELIABLE = SAME_RELIABLE;
         factor_graph.SAME_TIME_WEIGHT = SAME_TIME_WEIGHT;
@@ -57,33 +54,7 @@ public:
         InitialSubTopics();
         InitialPubTopics();
         StartSpinners(); 
-        history_worker_running.store(true, std::memory_order_release);
-        historyUpdateThread = std::thread(&TRBinning::HistoryUpdateWorker, this);
-        optimizationThread = std::thread(&TRBinning::Optimization, this);
-    }
-
-    void HistoryUpdateWorker()
-    {
-        while (history_worker_running.load(std::memory_order_acquire) && ros::ok())
-        {
-            if (!history_update_pending.load(std::memory_order_acquire))
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                continue;
-            }
-
-            std::unique_lock<std::mutex> lk(m_factor_graph_mux, std::try_to_lock);
-            if (!lk.owns_lock())
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                continue;
-            }
-
-            if (history_update_pending.exchange(false, std::memory_order_acq_rel))
-            {
-                factor_graph.updateHistoryInfo();
-            }
-        }
+        optimizationThread = std::thread(&SelfAdjustedTR::Optimization, this);
     }
 
     void Optimization()
@@ -209,10 +180,6 @@ public:
                         factor_graph.time_frame_last = factor_graph.time_frame_now;
                         factor_graph.has_new_data = false;
                     }
-
-                    // 异步触发历史统计更新（后台线程执行，主线程不等待）
-                    history_update_pending.store(true, std::memory_order_release);
-
                     double run_time = OptTime.toc();
                     
                     factor_graph.resizeMaxTRFactorNum(run_time, max_running_time_ms);
@@ -448,11 +415,9 @@ public:
     }
 
 
-    ~TRBinning()
+    ~SelfAdjustedTR()
     {
         freeSpinner();
-        history_worker_running.store(false, std::memory_order_release);
-        if (historyUpdateThread.joinable()) historyUpdateThread.join();
         if (optimizationThread.joinable()) optimizationThread.join();
         saveEphems();
     }
@@ -494,10 +459,10 @@ public:
 
 int main(int argc, char **argv)
 {
-    ros::init(argc, argv, "trbin_node"); 
+    ros::init(argc, argv, "self_adjusted_node"); 
     ROS_INFO("\033[1;32m----> trbinfgo_node Started (4-system L1+L2).\033[0m"); 
     // ...
-    TRBinning tddcp_node;
+    SelfAdjustedTR sa_node;
     ros::waitForShutdown();
     return 0;
 }
