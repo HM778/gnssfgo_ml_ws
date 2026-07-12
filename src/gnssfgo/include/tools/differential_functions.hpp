@@ -118,14 +118,20 @@ void findClosestEpoch(double t, std::map<double, std::vector<gnss_comm::ObsPtr>>
  * @param id, gnss data in one epoch, one satellite
  * @return none
 */
-void findSatellitewithSameId(double id, std::vector<gnss_comm::ObsPtr> gnss_data, gnss_comm::ObsPtr& same_id_sv)
+void findSatellitewithSameId(double id, std::vector<gnss_comm::ObsPtr> gnss_data, gnss_comm::ObsPtr& same_id_sv, int freq_idx)
 {
     int length = gnss_data.size();
     for(int i = 0; i < length; i++)
     {
-        if(gnss_data[i]->sat == id)
+        if(gnss_data[i]->sat == id )
         {
-            same_id_sv = gnss_data[i];
+            gnss_comm::L1_freq(gnss_data[i],&search_l1);
+            gnss_comm::L2_freq(gnss_data[i],&search_l2);
+            if((freq_idx == 1 && search_l1 >= 0) || (freq_idx == 2 && search_l2 >= 0))
+            {
+                same_id_sv = gnss_data[i];
+                break;
+            }
         }
     }
 }

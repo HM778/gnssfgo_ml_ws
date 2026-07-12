@@ -137,34 +137,62 @@ public:
         
         ObservationCheck();
 
-        //1. 遍历窗口，挑选候选TR因子
+        //遍历窗口，挑选候选TR因子
         auto curr_iter = iter;
         auto gnss_data = curr_iter->second;
         for(const auto& obs : gnss_data)
         {
-            if(!obs) // 连续观测不足2个历元的卫星不考虑构建TR因子，增加稳定性
+            if(!obs) // 连续观测不足2个历元的卫星不考虑构建TR因子
             {
                 continue;
             }
             else
             {
-                auto it = curr_iter;
+                auto ref_iter = curr_iter;
                 int i = 1;
                 while (i <= windowSize && it != gnss_raw_map.begin())
                 {
                     // ROS_INFO("FIND TR FACTOR: Satellite %d, Epoch Gap: %d", obs->sat, i);
-                    --it; // move to previous epoch; i means epoch-gap (>=1)
-                    //构建双差因子：
+                    --ref_iter; // move to previous epoch; i means epoch-gap (>=1)
+                    //构建双差因子L1/L2：
+                    for(int j=0;j<obs->freq.size();j++)
+                    {
+                        int l1_idx=-1,l2_idx=-1;
+                        L1_freq(obs,&l1_idx);
+                        L2_freq(obs,&l2_idx);
+
+                        int freq_idx = -1;
+
+                        // l1_idx/l2_idx 可能都是1
+                        if(l1_idx >= 0 && j == l1_idx)
+                        {
+                            // L1频段的双差因子构建
+                            freq_idx = 1;
+                        }
+
+                        else if(l2_idx >= 0 && j == l2_idx)
+                        {
+                            // L2频段的双差因子构建
+                            freq_idx = 2;
+                        }
+                    }
                     TRDDMeasurement tr_meas;
+                    tr_meas.freq_idx = freq_idx;
+                    
                     tr_meas.u_master_SV = obs;
 
-                    if(sat_lock_count_l1[obs->sat] <= i)
+                    // 不满足观测连续性
+                    if( ((freq_idx == 1) && (sat_lock_count_l1[obs->sat] <= i)) || 
+                        ((freq_idx == 2) && (sat_lock_count_l2[obs->sat] <= i)) )
                     {
                         break;
                     }
                     
                     // 在连续锁定的卫星中寻找副卫星
-                    for(auto pair: sat_lock_count_l1)
+                    std::map<int,int> sat_lock_count;
+                    if(freq_idx == 1) sat_lock_count = sat_lock_count_l1;
+                    else if (freq_idx == 2) sat_lock_count = sat_lock_count_l2;
+                    for(auto pair: sat_lock_count)
                     {
                         // ROS_INFO("CHECKING :  Satellite %d lock count: %d", pair.first, pair.second);
                         if(pair.first == obs->sat)
@@ -174,20 +202,24 @@ public:
 
                         if (satsys(pair.first, nullptr) != satsys(obs->sat, nullptr))
                         {
-                            continue; // 仅在同一星座/系统内构建TR双差，避免系统间钟差引入偏置
+                            continue; // 仅在同一星座/系统内构建TR双差，避免系统间钟差引入偏置 TODO:加入卫星枢纽，取消系统限制
                         }
 
                         if(pair.second > (i + 1)) // 连续观测至少i+1个历元（含当前），增加TR因子稳定性
                         {
                             // printf("selected: sat_id: %d,  lock_count: %d \n", pair.first, pair.second);
-                            // 找到一个满足条件的副卫星，构建TR因子
-                            findSatellitewithSameId(pair.first, gnss_data, tr_meas.u_iSV);
-                            findSatellitewithSameId(pair.first, it->second, tr_meas.r_iSV);
-                            findSatellitewithSameId(obs->sat, it->second, tr_meas.r_master_SV);
+                            // 找到一个**同频段**满足条件的副卫星，构建TR因子
+
+                            //TODO: 此时的副卫星没有任何特征筛选机制，
+                            findSatellitewithSameId(pair.first, gnss_data, tr_meas.u_iSV, tr_meas.freq_idx);
+                            findSatellitewithSameId(pair.first, ref_iter->second, tr_meas.r_iSV,tr_meas.freq_idx);
+
+                            // 挑出参考历元的主卫星观测
+                            findSatellitewithSameId(obs->sat, ref_iter->second, tr_meas.r_master_SV,tr_meas.freq_idx);
 
                             tr_meas.prev_epoch_index = measSize - 1 - i;
                             tr_meas.curr_epoch_index = measSize - 1;
-                            tr_meas.prev_time = it->first;
+                            tr_meas.prev_time = ref_iter->first;
                             tr_meas.curr_time = curr_iter->first;
 
                             if (tr_meas.prev_epoch_index < 0 || tr_meas.prev_epoch_index >= measSize ||
@@ -198,6 +230,7 @@ public:
                                 continue;
                             }
 
+                            // 检查星历信息
                             auto reference_sv_info = sv_info_window_map[tr_meas.prev_time];
                             auto current_sv_info = sv_info_window_map[tr_meas.curr_time];
                             if (!hasSatelliteInfo(current_sv_info, tr_meas.u_master_SV) ||
@@ -209,6 +242,7 @@ public:
                                 continue;
                             }
 
+                            // 将预测的移动距离关联到TR测量中，后续时间折扣函数使用
                             Eigen::Vector3d prev_pos(state_array[tr_meas.prev_epoch_index][0], state_array[tr_meas.prev_epoch_index][1], state_array[tr_meas.prev_epoch_index][2]);
                             Eigen::Vector3d pred_pos(state_array[tr_meas.curr_epoch_index-1][0], state_array[tr_meas.curr_epoch_index-1][1], state_array[tr_meas.curr_epoch_index-1][2]);
                             Eigen::Vector3d dop_vel ;
@@ -217,56 +251,50 @@ public:
                             dop_vel.z() = doppler_map[tr_meas.curr_time].twist.twist.linear.z;
                             pred_pos = pred_pos + dop_vel*((time_frame_now - time_frame_last)/10.0);
                             double pred_move = (pred_pos - prev_pos).norm();
-                            tr_meas.pred_move = pred_move; // 将预测的移动距离关联到TR测量中，方便后续时间折扣函数使用
+                            tr_meas.pred_move = pred_move; 
 
-
-                           if(checkRedundantPair(tr_meas))
+                            if(checkRedundantPair(tr_meas))
                             {
                                 // ROS_INFO("skip reason 3");
                                 continue; // 已存在相同卫星组合的TR因子，跳过以避免冗余
                             }
 
-                            if(tr_meas.u_iSV && tr_meas.r_master_SV && tr_meas.r_iSV)
+                            // 因子权重自适应调整（TODO）
+                            double time_discount = 1.0;
+                            double p_rel = 1.0;
+                            if(!SAME_RELIABLE)
                             {
-                                double time_discount = 1.0;
-                                double p_rel = 1.0;
-                                if(!SAME_RELIABLE)
-                                {
-                                    p_rel = 1.0;
-                                }
-                                
-                                if(!SAME_TIME_WEIGHT)
-                                {
-                                    time_discount = 1.0;
-                                } 
-
-                                tr_meas.tr_score = pow(p_rel,1.0/6.0) * time_discount ; // 综合可靠性得分，作为TR因子的权重依据
-
-                                // ROS_INFO("Found TR factor: Rel_Prob=%.3f, |Gap: %d, Time_Discount=%.3f | TR_Score=%.3f", p_rel, time_discount,tr_meas.curr_epoch_index-tr_meas.prev_epoch_index, tr_meas.tr_score);
-
-                                if(TRFactorCount >= MaxTRFactorNum)
-                                {
-                                    // ROS_INFO("Reached max TR factor limit (%d), skipping remaining candidates.", MaxTRFactorNum);
-                                    break; 
-                                }
-                                
-                                tr_measurments.push_back(tr_meas);   //候选双差因子列表
-                                TRFactorCount++;
+                                p_rel = 1.0;
                             }
+                            
+                            if(!SAME_TIME_WEIGHT)
+                            {
+                                time_discount = 1.0;
+                            } 
+
+                            tr_meas.tr_score = pow(p_rel,1.0/6.0) * time_discount ; // 综合可靠性得分，作为TR因子的权重依据
+                            tr_measurments.push_back(tr_meas);   //添加到候选双差因子列表
+
+
+                            TRFactorCount++;
+                            // 达到数量上限，退出
+                            if(TRFactorCount >= MaxTRFactorNum)
+                            {
+                                break; 
+                            }
+                            
                         }
                     }
                     ++i;
                     if(TRFactorCount >= MaxTRFactorNum)
                     {
-                        // ROS_INFO("Reached max TR factor limit (%d), skipping remaining candidates.", MaxTRFactorNum);
                         break; 
                     }
                 }
             }
             if(TRFactorCount >= MaxTRFactorNum)
             {
-                // ROS_INFO("Reached max TR factor limit (%d), skipping remaining candidates.", MaxTRFactorNum);
-                break;
+               break;
             }
         }
 
@@ -291,6 +319,8 @@ public:
                     new TRDDCPFactor(tr_measurments[i], current_sv_info, reference_sv_info, tr_measurments[i].tr_score));
             problem.AddResidualBlock(dd_cp_function, loss_function, state_array[prev_epoch_index], state_array[epoch_index]);
         }
+
+        // 因子信息统计
         int cnt_gps=0, cnt_glo=0, cnt_gal=0, cnt_bds=0;
         int cnt_l1=0, cnt_l2=0;
         for (const auto& tr_m : tr_measurments) {
@@ -331,18 +361,22 @@ public:
     {
         for(int i=0;i<tr_measurments.size();i++)
         {
+            // 主主 == 副副
             if(tr_meas.r_master_SV->sat == tr_measurments[i].r_master_SV->sat 
                 && tr_meas.r_iSV->sat == tr_measurments[i].r_iSV->sat 
                 && tr_meas.curr_epoch_index == tr_measurments[i].curr_epoch_index 
-                && tr_meas.prev_epoch_index == tr_measurments[i].prev_epoch_index)
+                && tr_meas.prev_epoch_index == tr_measurments[i].prev_epoch_index
+                && tr_meas.freq_idx == tr_measurments[i].freq_idx)
             {
                 // ROS_INFO("Redundant pair found: Master SV %d, iSV %d, Epoch gap %d", tr_meas.r_master_SV->sat, tr_meas.r_iSV->sat, tr_meas.curr_epoch_index - tr_meas.prev_epoch_index);
                 return true;
             }
+            // 主副 == 副主
             else if(tr_meas.r_master_SV->sat == tr_measurments[i].r_iSV->sat 
                 && tr_meas.r_iSV->sat == tr_measurments[i].r_master_SV->sat
                 && tr_meas.curr_epoch_index == tr_measurments[i].curr_epoch_index
-                && tr_meas.prev_epoch_index == tr_measurments[i].prev_epoch_index)
+                && tr_meas.prev_epoch_index == tr_measurments[i].prev_epoch_index
+                && tr_meas.freq_idx == tr_measurments[i].freq_idx)
             {
                 // ROS_INFO("Redundant pair found (reversed): Master SV %d, iSV %d, Epoch gap %d", tr_meas.r_master_SV->sat, tr_meas.r_iSV->sat, tr_meas.curr_epoch_index - tr_meas.prev_epoch_index);
                 return true;
@@ -513,8 +547,10 @@ public:
         }
 
         //更新sat_cp_const以适应卫星状态的变化，避免过时的常数导致误判周跳
+        std::map<int,double> sat_cp_const;
+        if(freq == 1) sat_cp_const = sat_cp_const_l1;
+        else if(freq == 2) sat_cp_const = sat_cp_const_l2;
         sat_cp_const[sat_id] = curr_cp_cycle - prev_cp_cycle;
-        // printf("sat_id %d: const: %f cycles. | ", sat_id, sat_cp_const[sat_id]);
         
         const Eigen::Vector3d prev_vel{doppler_map[allobs_prev->first].twist.twist.linear.x,
                                     doppler_map[allobs_prev->first].twist.twist.linear.y,
@@ -576,6 +612,7 @@ public:
         return false;
     }
 
+    // 输出ENU结果估计的协方差
     bool printLatestPosCovarianceENU(Eigen::Vector3d& result_enu) const
     {
         if (covMatrix.rows() < 3 || covMatrix.cols() < 3)
@@ -612,5 +649,3 @@ public:
     }
 
 };
-
-
