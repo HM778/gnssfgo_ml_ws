@@ -1,0 +1,976 @@
+/**
+* This file is part of gnss_comm.
+*
+* Copyright (C) 2021 Aerial Robotics Group, Hong Kong University of Science and Technology
+* Author: CAO Shaozu (shaozu.cao@gmail.com)
+*
+* gnss_comm is free software: you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation, either version 3 of the License, or
+* (at your option) any later version.
+*
+* gnss_comm is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with gnss_comm. If not, see <http://www.gnu.org/licenses/>.
+*/
+
+#include "gnss_spp.hpp"
+#include "gnss_utility.hpp"
+#include <glog/logging.h>
+
+
+#define CUT_OFF_DEGREE 15.0
+
+namespace gnss_comm
+{
+    Eigen::Matrix<double, 4, 4> dopp_cov = Eigen::Matrix<double, 4, 4>::Zero();
+    std::mutex dopp_cov_mux;
+
+    void filter_L1(const std::vector<ObsPtr> &obs, const std::vector<EphemBasePtr> &ephems, 
+        std::vector<ObsPtr> &L1_obs, std::vector<EphemBasePtr> &L1_ephems)
+    {
+        L1_obs.clear();
+        L1_ephems.clear();
+        for (size_t i = 0; i < obs.size(); ++i)
+        {
+            const ObsPtr &this_obs = obs[i];
+            // check system
+            const uint32_t sys = satsys(this_obs->sat, NULL);
+            if (sys != SYS_GPS && sys != SYS_GLO && sys != SYS_BDS && sys != SYS_GAL)
+                continue;
+            // check signal frequency
+            const double obs_freq = L1_freq(this_obs, NULL);
+            if (obs_freq < 0)   continue;
+
+            L1_obs.push_back(this_obs);
+            L1_ephems.push_back(ephems[i]);
+        }
+    }
+
+    void filter_dual_freq(const std::vector<ObsPtr> &obs, const std::vector<EphemBasePtr> &ephems,
+        std::vector<ObsPtr> &IF_obs, std::vector<EphemBasePtr> &IF_ephems)
+    {
+        IF_obs.clear();
+        IF_ephems.clear();
+        for (size_t i = 0; i < obs.size(); ++i)
+        {
+            const ObsPtr &this_obs = obs[i];
+            const uint32_t sys = satsys(this_obs->sat, NULL);
+            if (sys != SYS_GPS && sys != SYS_GLO && sys != SYS_BDS && sys != SYS_GAL)
+                continue;
+            if (!has_dual_freq(this_obs))
+                continue;
+            IF_obs.push_back(this_obs);
+            IF_ephems.push_back(ephems[i]);
+        }
+    }
+    /* 从观测和星历数据中获取卫星的位置速度等参数 */
+    std::vector<SatStatePtr> sat_states(const std::vector<ObsPtr> &obs, 
+        const std::vector<EphemBasePtr> &ephems)
+    {
+        std::vector<SatStatePtr> all_sv_states;
+        const uint32_t num_obs = obs.size();
+        for (size_t i = 0; i < num_obs; ++i)
+        {
+            SatStatePtr sat_state(new SatState());
+            all_sv_states.push_back(sat_state);
+            
+            ObsPtr this_obs = obs[i];
+            const uint32_t sat = this_obs->sat;
+            const uint32_t sys = satsys(sat, NULL);
+            int l1_idx = -1;
+            L1_freq(this_obs, &l1_idx);
+            if (l1_idx < 0)   continue;
+            
+            double tof = this_obs->psr[l1_idx] / LIGHT_SPEED;
+
+            gtime_t sv_tx = time_add(this_obs->time, -tof);
+            double svdt = 0, svddt = 0;
+            Eigen::Vector3d sv_pos = Eigen::Vector3d::Zero();
+            Eigen::Vector3d sv_vel = Eigen::Vector3d::Zero();
+            //glonass星历中包含卫星位置信息
+            if (sys == SYS_GLO)
+            {
+                GloEphemPtr glo_ephem = std::dynamic_pointer_cast<GloEphem>(ephems[i]);
+                svdt = geph2svdt(sv_tx, glo_ephem);
+                sv_tx = time_add(sv_tx, -svdt);
+                sv_pos = geph2pos(sv_tx, glo_ephem, &svdt);
+                sv_vel = geph2vel(sv_tx, glo_ephem, &svddt);
+            }
+            else
+            {
+                EphemPtr ephem = std::dynamic_pointer_cast<Ephem>(ephems[i]);
+                
+                //其他卫星的位置需要计算得到
+                svdt = eph2svdt(sv_tx, ephem);
+                sv_tx = time_add(sv_tx, -svdt);
+                sv_pos = eph2pos(sv_tx, ephem, &svdt);
+                sv_vel = eph2vel(sv_tx, ephem, &svddt);
+                sat_state->tgd = ephem->tgd[0];
+            }
+            sat_state->sat_id = sat;
+            sat_state->ttx    = sv_tx;
+            sat_state->pos    = sv_pos;
+            sat_state->vel    = sv_vel;
+            sat_state->dt     = svdt;
+            sat_state->ddt    = svddt;
+            // LOG(INFO) << sat << "-->sv_pos: " << sv_pos(0) << ", " << sv_pos(1) << ", " << sv_pos(2) ;
+        }
+        return all_sv_states;
+    }
+
+    // 根据观测和星历数据构建经过大气延迟等校正的伪距测量，供因子图使用
+    void psr_res(const Eigen::Matrix<double, 7, 1> &rcv_state, const std::vector<ObsPtr> &obs, 
+        const std::vector<SatStatePtr> &all_sv_states, const std::vector<double> &iono_params, 
+        Eigen::VectorXd &res, Eigen::MatrixXd &J, std::vector<Eigen::Vector2d> &atmos_delay, 
+        std::vector<Eigen::Vector2d> &all_sv_azel)
+    {
+        const uint32_t num_sv = all_sv_states.size();
+        // clear output
+        res = Eigen::VectorXd::Zero(num_sv);
+        J = Eigen::MatrixXd::Zero(num_sv, 7);
+        atmos_delay.resize(num_sv);
+        all_sv_azel.resize(num_sv);
+
+        for (uint32_t i = 0; i < num_sv; ++i)
+        {
+            int l1_idx = -1;
+            L1_freq(obs[i], &l1_idx);
+            if (l1_idx < 0)   continue;
+
+            const SatStatePtr &sat_state = all_sv_states[i];
+            uint32_t this_sys = satsys(sat_state->sat_id, NULL);
+            Eigen::Vector3d sv_pos = sat_state->pos;
+
+            double ion_delay=0, tro_delay=0;
+            double azel[2] = {0, M_PI/2.0};
+            if (rcv_state.topLeftCorner<3,1>().norm() > 0)
+            {
+                sat_azel(rcv_state.topLeftCorner<3,1>(), sv_pos, azel);
+                Eigen::Vector3d rcv_lla = ecef2geo(rcv_state.head<3>());
+                // use satellite signal transmit time instead
+                tro_delay = calculate_trop_delay(sat_state->ttx, rcv_lla, azel);
+                ion_delay = calculate_ion_delay(sat_state->ttx, iono_params, rcv_lla, azel);
+            }
+
+            Eigen::Vector3d rv2sv = sv_pos - rcv_state.topLeftCorner<3,1>();
+            Eigen::Vector3d unit_rv2sv = rv2sv.normalized();
+            //与doppler的sagnac项不一致，多普勒Sagnac项实际上是伪距Sagnac项的时间导数：
+            double sagnac_term = EARTH_OMG_GPS*(sv_pos(0)*rcv_state(1,0)-
+                sv_pos(1)*rcv_state(0,0))/LIGHT_SPEED;
+            //估计值 = 卫地距离 + sagnac项 + 接收机钟差（*c）- 卫星钟差 + 大气延迟 + 卫星钟漂
+            double psr_estimated = rv2sv.norm() + sagnac_term + rcv_state(3+sys2idx.at(this_sys)) -
+             sat_state->dt*LIGHT_SPEED + tro_delay + ion_delay + sat_state->tgd*LIGHT_SPEED;
+
+            J.block(i, 0, 1, 3) = -unit_rv2sv.transpose();
+            J(i, 3+sys2idx.at(this_sys)) = 1.0;
+            //估计值-观测值
+            res(i) = psr_estimated - obs[i]->psr[l1_idx];
+
+            atmos_delay[i] = Eigen::Vector2d(ion_delay, tro_delay);
+            all_sv_azel[i] = Eigen::Vector2d(azel[0], azel[1]);
+        }
+    }
+
+    Eigen::Matrix<double, 7, 1> psr_pos(const std::vector<ObsPtr> &obs, 
+        const std::vector<EphemBasePtr> &ephems, const std::vector<double> &iono_params)
+    {
+        Eigen::Matrix<double, 7, 1> result;
+        result.setZero();
+
+        std::vector<ObsPtr> valid_obs;
+        std::vector<EphemBasePtr> valid_ephems;
+        
+        //new added
+        for(int i = 0; i < obs.size(); i++)
+        {
+            for(int j = 0; j < ephems.size(); j++)
+            {
+                if(obs[i]->sat == ephems[j]->sat)
+                {
+                    valid_obs.push_back(obs[i]);
+                    valid_ephems.push_back(ephems[j]);
+                    break;
+                }
+            }
+        }
+
+        // filter_L1(obs, ephems, valid_obs, valid_ephems);
+        
+        if (valid_obs.size() < 4)
+        {
+            LOG(ERROR) << "[gnss_comm::psr_pos] GNSS observation not enough.\n";
+            return result;
+        }
+        
+        // std::vector<SatStatePtr> all_sat_states = sat_states(valid_obs, valid_ephems);
+        std::vector<SatStatePtr> all_sat_states = sat_states(valid_obs, valid_ephems);
+
+        Eigen::Matrix<double, 7, 1> xyzt; //(x,y,z,dt(不同卫星系统))
+        xyzt.setZero();
+        double dx_norm = 1.0;
+        uint32_t num_iter = 0;
+        //最小二乘
+        while(num_iter < MAX_ITER_PVT && dx_norm > EPSILON_PVT)
+        {
+            Eigen::VectorXd b;
+            Eigen::MatrixXd G;
+            std::vector<Eigen::Vector2d> atmos_delay;
+            std::vector<Eigen::Vector2d> all_sv_azel;
+            psr_res(xyzt, valid_obs, all_sat_states, iono_params, b, G, atmos_delay, all_sv_azel);
+
+            std::vector<uint32_t> good_idx;
+            for (uint32_t i = 0; i < valid_obs.size(); ++i)
+            {
+                if (G.row(i).norm() <= 0)   continue;       // res not computed
+                if (all_sv_azel[i].y() > CUT_OFF_DEGREE/180.0*M_PI)  
+                    good_idx.push_back(i);
+            }
+            int sys_mask[4] = {0, 0, 0, 0};
+            for (uint32_t i = 0; i < valid_obs.size(); ++i)
+            {
+                const uint32_t obs_sys = satsys(valid_obs[i]->sat, NULL);
+                sys_mask[sys2idx.at(obs_sys)] = 1;
+            }
+            uint32_t num_extra_constraint = 4;
+            for (uint32_t k = 0; k < 4; ++k)    num_extra_constraint -= sys_mask[k];
+            LOG_IF(FATAL, num_extra_constraint >= 4) << "[gnss_comm::psr_pos] too many extra-clock constraints.\n";
+
+            const uint32_t good_num = good_idx.size();
+            LOG_IF(ERROR, good_num < 4) << "too few good obs: " << good_num;
+
+            Eigen::MatrixXd good_G(good_num+num_extra_constraint, 7);
+            Eigen::VectorXd good_b(good_num+num_extra_constraint);
+            Eigen::MatrixXd good_W(good_num+num_extra_constraint, good_num+num_extra_constraint);
+            good_W.setZero();
+            for (uint32_t i = 0; i < good_num; ++i)
+            {
+                const uint32_t origin_idx = good_idx[i];
+                const ObsPtr &this_obs = valid_obs[origin_idx];
+                good_G.row(i) = G.row(origin_idx);
+                good_b(i) = b(origin_idx);
+                // compose weight
+                const double sin_el = sin(all_sv_azel[origin_idx].y());
+                double weight = sin_el*sin_el;
+                int l1_idx = -1;
+                L1_freq(this_obs, &l1_idx);
+                LOG_IF(FATAL, l1_idx < 0) << "[gnss_comm::psr_pos] no L1 observation found.\n";
+
+                if (this_obs->psr_std[l1_idx] > 0)
+                    weight /= (this_obs->psr_std[l1_idx]/0.16);
+                const uint32_t obs_sys = satsys(this_obs->sat, NULL);
+                if (obs_sys == SYS_GPS || obs_sys == SYS_BDS)
+                    weight /= valid_ephems[origin_idx]->ura-1;
+                else if (obs_sys == SYS_GAL)
+                    weight /= valid_ephems[origin_idx]->ura-2;
+                else if (obs_sys == SYS_GLO)
+                    weight /= 4;
+                good_W(i, i) = weight;
+            }
+            uint32_t tmp_count = good_num;
+            // add extra pseudo measurement to contraint unobservable clock bias
+            for (size_t k = 0; k < 4; ++k)
+            {
+                if (!sys_mask[k])
+                {
+                    good_G.row(tmp_count).setZero();
+                    good_G(tmp_count, k+3) = 1.0;
+                    good_b(tmp_count) = 0;
+                    good_W(tmp_count, tmp_count) = 1000;       // large weight
+                    ++tmp_count;
+                }
+            }
+
+            // ready for solving
+            Eigen::VectorXd dx = -(good_G.transpose()*good_W*good_G).inverse() * good_G.transpose() * good_W * good_b;
+            dx_norm = dx.norm();
+            xyzt += dx;
+            // LOG(INFO) << "cov is \n" << (G.transpose()*W*G).inverse();
+            ++num_iter;
+        }
+        if (num_iter == MAX_ITER_PVT)
+        {
+            // LOG(WARNING) << "[gnss_comm::psr_pos] XYZT solver reached maximum iterations.\n";
+            return result;
+        }
+
+        result = xyzt;
+        return result;
+    }
+
+    void dopp_res(const Eigen::Matrix<double, 4, 1> &rcv_state, const Eigen::Vector3d &rcv_ecef,
+                  const std::vector<ObsPtr> &obs, const std::vector<SatStatePtr> &all_sv_states, 
+                  Eigen::VectorXd &res, Eigen::MatrixXd &J)
+    {
+        const uint32_t num_sv = all_sv_states.size();
+        //clear output
+        res = Eigen::VectorXd::Zero(num_sv);
+        J = Eigen::MatrixXd::Zero(num_sv, 4);
+
+        for (uint32_t i = 0; i < num_sv; ++i)
+        {
+            const SatStatePtr &sat_state = all_sv_states[i];
+            Eigen::Vector3d unit_rv2sv = (sat_state->pos - rcv_ecef).normalized();
+            // sagnac修正项
+            double sagnac_term = EARTH_OMG_GPS/LIGHT_SPEED*(
+                sat_state->vel(0)*rcv_ecef(1)+ sat_state->pos(0)*rcv_state(1,0) - 
+                sat_state->vel(1)*rcv_ecef(0) - sat_state->pos(1)*rcv_state(0,0));
+            // doppler估计值 = [(卫星速度 - 接收机速度)·(卫地单位向量)]+ 时间误差 + sagnac - 卫星钟漂*c
+            // = 几何距离变化率 + 时间漂移(包含光速*c) + sagnac - 卫星钟漂*c
+            double dopp_estimated = (sat_state->vel - rcv_state.topLeftCorner<3, 1>()).dot(unit_rv2sv) + 
+                    rcv_state(3, 0) + sagnac_term - sat_state->ddt*LIGHT_SPEED;
+            int l1_idx = -1;
+            const double obs_freq = L1_freq(obs[i], &l1_idx);
+            if (obs_freq < 0)   continue;
+            const double wavelength = LIGHT_SPEED / obs_freq;
+            //因为无误差的时候，dopp_estimated + obs[i]->dopp[l1_idx]*wavelength应当为0，所以当有误差时，这两者的和即为测量和估计值的差值
+            res(i) = dopp_estimated + obs[i]->dopp[l1_idx]*wavelength;
+            J.block(i, 0, 1, 3) = -1.0 * unit_rv2sv.transpose();
+            J(i, 3) = 1.0;
+        }
+    }
+
+    bool dopp_cov_set(Eigen::Matrix<double, 4, 4> cov)
+    {
+        std::lock_guard<std::mutex> lock(dopp_cov_mux);
+        dopp_cov = std::move(cov);
+        return true;
+    }
+
+    Eigen::Matrix<double,4,4> dopp_cov_get()
+    {
+        std::lock_guard<std::mutex> lock(dopp_cov_mux);
+        return dopp_cov;
+    }
+
+    /* vx vy vz dt + covariance*/
+    Eigen::Matrix<double, 4, 1> dopp_vel(const std::vector<ObsPtr> &obs, 
+        const std::vector<EphemBasePtr> &ephems, Eigen::Vector3d &ref_ecef)
+    {
+        // LOG(INFO) << "try to solve Doppler velocity.";
+        
+        Eigen::Matrix<double, 4, 1> result;
+        
+        result.setZero();
+
+        if (ref_ecef.norm() == 0 || std::isnan(ref_ecef.norm()))
+        {
+            // reference point not given, try calculate using pseudorange
+            //使用伪距初始化参考位置
+            std::vector<double> zero_iono_params(8, 0.0);
+            Eigen::Matrix<double, 7, 1> psr_result = psr_pos(obs, ephems, zero_iono_params);
+            if (psr_result.head<3>().norm() != 0)
+            {
+                ref_ecef = psr_result.head<3>();
+            }
+            else
+            {
+                // LOG(ERROR) << "[gnss_comm::dopp_vel] Unable to initialize reference position for Doppler calculation.\n";
+                return result;
+            }
+        }
+        std::vector<ObsPtr> valid_obs;
+        std::vector<EphemBasePtr> valid_ephems;
+        //过滤L1频段的观测数据
+        
+        //new added
+        for(int i = 0; i < obs.size(); i++)
+        {
+            for(int j = 0; j < ephems.size(); j++)
+            {
+                if(obs[i]->sat == ephems[j]->sat)
+                {
+                    valid_obs.push_back(obs[i]);
+                    valid_ephems.push_back(ephems[j]);
+                    // std::cout << "dop_vel------->sat : " << ephems[j]->sat << std::endl;
+                    break;
+                }
+            }
+        }
+
+        // filter_L1(obs, ephems, valid_obs, valid_ephems);
+        //观测数量小于4时 无法完成速度解算
+        if (valid_obs.size() < 4)
+        {
+            LOG(ERROR) << "[gnss_comm::dopp_vel] GNSS observation not enough for velocity calculation.\n";
+            return result;
+        }
+        //获取卫星数据
+        
+        std::vector<SatStatePtr> all_sat_states = sat_states(valid_obs, valid_ephems);
+        
+        // compute azel for all satellite 计算卫星方位角azel[0] 高度角azel[1]
+        std::vector<Eigen::Vector2d> all_sv_azel;
+        for (uint32_t i = 0; i < all_sat_states.size(); ++i)
+        {
+            double azel[2] = {0, 0};
+            sat_azel(ref_ecef, all_sat_states[i]->pos, azel);
+            all_sv_azel.emplace_back(azel[0], azel[1]);
+        }
+
+        Eigen::Matrix<double, 4, 1> xyzt_dot; //状态向量
+        xyzt_dot.setZero();
+        double dx_norm = 1.0;
+        uint32_t num_iter = 0;
+        //最小二乘
+        uint32_t good_num = 0;
+        Eigen::MatrixXd good_G = Eigen::MatrixXd::Zero(0, 4);
+        Eigen::VectorXd good_b = Eigen::VectorXd::Zero(0);
+        Eigen::MatrixXd good_W = Eigen::MatrixXd::Zero(0, 0);
+
+        while(num_iter < MAX_ITER_PVT && dx_norm > EPSILON_PVT)
+        {
+            
+            Eigen::MatrixXd G;
+            Eigen::VectorXd b; 
+            dopp_res(xyzt_dot, ref_ecef, valid_obs, all_sat_states, b, G);
+            
+            // 筛选可用观测，有
+            std::vector<uint32_t> good_idx;
+            for (uint32_t i = 0; i < valid_obs.size(); ++i)
+            {
+                if (G.row(i).norm() <= 0)   continue;       // res not computed 表示第i颗卫星的观测行在雅可比矩阵中接近零向量
+                if (all_sv_azel[i].y() > CUT_OFF_DEGREE/180.0*M_PI)  
+                    good_idx.push_back(i);
+            }
+            good_num = good_idx.size();
+            if (good_num < 4)
+            {
+                LOG(ERROR) << "[gnss_comm::dopp_vel] too few good obs after elevation filter: " << good_num;
+                return result;
+            }
+            good_G = Eigen::MatrixXd::Zero(good_num, 4);
+            good_b = Eigen::VectorXd::Zero(good_num);
+            good_W = Eigen::MatrixXd::Zero(good_num, good_num);
+            for (uint32_t i = 0; i < good_num; ++i)
+            {
+                const uint32_t origin_idx = good_idx[i];
+                good_G.row(i) = G.row(origin_idx);
+                good_b(i) = b(origin_idx);
+                const double sin_el = sin(all_sv_azel[origin_idx].y());
+                double weight = sin_el*sin_el;
+                const ObsPtr &this_obs = valid_obs[origin_idx];
+                int l1_idx = -1;
+                const double obs_freq = L1_freq(this_obs, &l1_idx);
+                LOG_IF(FATAL, l1_idx < 0) << "[gnss_comm::dopp_vel] no L1 observation found.\n";
+                if (this_obs->dopp_std[l1_idx] > 0)
+                    // weight /= (this_obs->dopp_std[l1_idx]/0.256);
+                {
+                    // 将Hz单位的多普勒标准差转换为m/s
+                    const double wavelength = LIGHT_SPEED / obs_freq;
+                    double dopp_std_mps = this_obs->dopp_std[l1_idx] * wavelength;
+                    // 用速度单位的标准差计算权重
+                    weight /= (dopp_std_mps / 0.256); // 0.256是经验系数，可能需要调整
+                }
+
+                const uint32_t obs_sys = satsys(this_obs->sat, NULL);
+                if (obs_sys == SYS_GPS || obs_sys == SYS_BDS)
+                    weight /= valid_ephems[origin_idx]->ura-1;
+                else if (obs_sys == SYS_GAL)
+                    weight /= valid_ephems[origin_idx]->ura-2;
+                else if (obs_sys == SYS_GLO)
+                    weight /= 2;
+                good_W(i, i) = weight;
+            }
+            // solve 最小二乘求解
+            Eigen::VectorXd dx = -(good_G.transpose()*good_W*good_G).inverse() * good_G.transpose() * good_W * good_b;
+            dx_norm = dx.norm();
+            xyzt_dot += dx;
+
+            // dx_norm = 0;
+            // LOG(INFO) << "cov is \n" << (G.transpose()*W*G).inverse();
+            ++num_iter;
+        }
+        if (num_iter == MAX_ITER_PVT)
+            LOG(WARNING) << "[gnss_comm::dopp_vel] XYZT solver reached maximum iterations.\n";
+
+        // Compute and publish a usable covariance for downstream weighting.
+        // Some callers (e.g., factor-graph) rely on dopp_cov_get() to form Doppler weights.
+        Eigen::Matrix<double, 4, 4> cov_out = Eigen::Matrix<double, 4, 4>::Identity() * 1e2;
+        if (good_num >= 4)
+        {
+            const Eigen::MatrixXd normal = good_G.transpose() * good_W * good_G;
+            Eigen::FullPivLU<Eigen::MatrixXd> lu(normal);
+            if (lu.isInvertible())
+            {
+                cov_out = lu.inverse();
+            }
+        }
+        dopp_cov_set(cov_out);
+
+        result = xyzt_dot;
+        return result;
+    }
+
+    Eigen::Matrix<double, 4, 1> dopp_vel_GGLweight(const std::vector<ObsPtr> &obs, 
+        const std::vector<EphemBasePtr> &ephems, Eigen::Vector3d &ref_ecef)
+    {
+        // LOG(INFO) << "try to solve Doppler velocity with GGL weight.";
+        
+        Eigen::Matrix<double, 4, 1> result;
+        
+        result.setZero();
+
+        if (ref_ecef.norm() == 0 || std::isnan(ref_ecef.norm()))
+        {
+            // reference point not given, try calculate using pseudorange
+            //使用伪距初始化参考位置
+            std::vector<double> zero_iono_params(8, 0.0);
+            Eigen::Matrix<double, 7, 1> psr_result = psr_pos(obs, ephems, zero_iono_params);
+            if (psr_result.head<3>().norm() != 0)
+            {
+                ref_ecef = psr_result.head<3>();
+            }
+            else
+            {
+                LOG(ERROR) << "[gnss_comm::dopp_vel] Unable to initialize reference position for Doppler calculation.\n";
+                return result;
+            }
+        }
+        std::vector<ObsPtr> valid_obs;
+        std::vector<EphemBasePtr> valid_ephems;
+        //过滤L1频段的观测数据
+        
+        //new added
+        for(int i = 0; i < obs.size(); i++)
+        {
+            for(int j = 0; j < ephems.size(); j++)
+            {
+                if(obs[i]->sat == ephems[j]->sat)
+                {
+                    valid_obs.push_back(obs[i]);
+                    valid_ephems.push_back(ephems[j]);
+                    // std::cout << "dop_vel------->sat : " << ephems[j]->sat << std::endl;
+                    break;
+                }
+            }
+        }
+
+        // filter_L1(obs, ephems, valid_obs, valid_ephems);
+        //观测数量小于4时 无法完成速度解算
+        // std::cout << "-------->doppler_vel -->valid_obs : " << valid_obs.size() <<std::endl;
+        if (valid_obs.size() < 4)
+        {
+            LOG(ERROR) << "[gnss_comm::dopp_vel] GNSS observation not enough for velocity calculation.\n";
+            return result;
+        }
+        //获取卫星数据
+        
+        std::vector<SatStatePtr> all_sat_states = sat_states(valid_obs, valid_ephems);
+        
+        // compute azel for all satellite 计算卫星方位角azel[0] 高度角azel[1]
+        std::vector<Eigen::Vector2d> all_sv_azel;
+        for (uint32_t i = 0; i < all_sat_states.size(); ++i)
+        {
+            double azel[2] = {0, 0};
+            sat_azel(ref_ecef, all_sat_states[i]->pos, azel);
+            all_sv_azel.emplace_back(azel[0], azel[1]);
+        }
+
+        Eigen::Matrix<double, 4, 1> xyzt_dot; //状态向量
+        xyzt_dot.setZero();
+        double dx_norm = 1.0;
+        uint32_t num_iter = 0;
+        //最小二乘
+        uint32_t good_num = 0;
+        Eigen::MatrixXd good_G = Eigen::MatrixXd::Zero(0, 4);
+        Eigen::VectorXd good_b = Eigen::VectorXd::Zero(0);
+        Eigen::MatrixXd good_W = Eigen::MatrixXd::Zero(0, 0);
+
+        //huimin -GGL
+        Eigen::MatrixXd GGL_cov;
+        double snr_1 = 50; // T = 50 超过该值 信号极佳
+        double snr_A = 30; // A = 30
+        double snr_a = 30;// a = 30
+        double snr_0 = 10; // F = 10
+
+        while(num_iter < MAX_ITER_PVT && dx_norm > EPSILON_PVT)
+        {
+            
+            Eigen::MatrixXd G;
+            Eigen::VectorXd b; 
+            dopp_res(xyzt_dot, ref_ecef, valid_obs, all_sat_states, b, G);
+            
+            // 筛选可用观测，有
+            std::vector<uint32_t> good_idx;
+            for (uint32_t i = 0; i < valid_obs.size(); ++i)
+            {
+                if (G.row(i).norm() <= 0)   continue;       // res not computed 表示第i颗卫星的观测行在雅可比矩阵中接近零向量
+                if (all_sv_azel[i].y() > CUT_OFF_DEGREE/180.0*M_PI)  
+                    good_idx.push_back(i);
+            }
+            good_num = good_idx.size();
+            if (good_num < 4)
+            {
+                LOG(ERROR) << "[gnss_comm::dopp_vel_GGLweight] too few good obs after elevation filter: " << good_num;
+                return result;
+            }
+            good_G = Eigen::MatrixXd::Zero(good_num, 4);
+            good_b = Eigen::VectorXd::Zero(good_num);
+            good_W = Eigen::MatrixXd::Zero(good_num, good_num);
+
+            for (uint32_t i = 0; i < good_num; ++i)
+            {
+                const uint32_t origin_idx = good_idx[i];
+                good_G.row(i) = G.row(origin_idx);
+                good_b(i) = b(origin_idx);
+                const double sin_el = sin(all_sv_azel[origin_idx].y());
+                // double weight = sin_el*sin_el;
+                
+                const ObsPtr &this_obs = valid_obs[origin_idx];
+                int l1_idx = -1;
+                const double obs_freq = L1_freq(this_obs, &l1_idx);
+                LOG_IF(FATAL, l1_idx < 0) << "[gnss_comm::dopp_vel] no L1 observation found.\n";
+                if (this_obs->dopp_std[l1_idx] > 0)
+                    // weight /= (this_obs->dopp_std[l1_idx]/0.256);
+                {
+                    // 将Hz单位的多普勒标准差转换为m/s
+                    const double wavelength = LIGHT_SPEED / obs_freq;
+                    double dopp_std_mps = this_obs->dopp_std[l1_idx] * wavelength;
+                    // 用速度单位的标准差计算权重
+                    // weight /= (dopp_std_mps / 0.256); // 0.256是经验系数，可能需要调整
+                }
+
+                //  use weight method of goGPS
+                double snr_R ;
+                if(l1_idx >= 0)
+                    snr_R = this_obs->CN0[l1_idx];
+                else
+                    snr_R = 30.0; // if no SNR info, set to 30 dB-Hz
+                double q_r_1 = 1.0 / (sin_el * sin_el);
+                double q_r_2 = pow(10,(-(snr_R - snr_1) / snr_a));
+                double q_r_3 = (((snr_A / (pow(10,(-(snr_0 - snr_1) / snr_a))) - 1) / (snr_0 - snr_1)) * (snr_R - snr_1) + 1);
+                double q_R = q_r_1* (q_r_2 * q_r_3);
+
+                double weight = 1.0;
+                weight *= 1.0 / q_R;
+                good_W(i, i) = weight;
+            }
+            // solve 最小二乘求解
+            Eigen::VectorXd dx = -(good_G.transpose()*good_W*good_G).inverse() * good_G.transpose() * good_W * good_b;
+            dx_norm = dx.norm();
+            xyzt_dot += dx;
+
+            // dx_norm = 0;
+            // LOG(INFO) << "cov is \n" << (G.transpose()*W*G).inverse();
+            ++num_iter;
+        }
+        //huimin
+        GGL_cov = (good_G.transpose()*good_W*good_G).inverse();
+        dopp_cov_set(GGL_cov);
+        
+        
+        if (num_iter == MAX_ITER_PVT)
+            LOG(WARNING) << "[gnss_comm::dopp_vel] XYZT solver reached maximum iterations.\n";
+        
+        result = xyzt_dot;
+        return result;
+    }
+
+    Eigen::Matrix<double, 7, 1> psr_pos_IF(const std::vector<ObsPtr> &obs,
+        const std::vector<EphemBasePtr> &ephems)
+    {
+        Eigen::Matrix<double, 7, 1> result;
+        result.setZero();
+
+        std::vector<ObsPtr> valid_obs;
+        std::vector<EphemBasePtr> valid_ephems;
+
+        for (size_t i = 0; i < obs.size(); i++)
+        {
+            for (size_t j = 0; j < ephems.size(); j++)
+            {
+                if (obs[i]->sat == ephems[j]->sat)
+                {
+                    valid_obs.push_back(obs[i]);
+                    valid_ephems.push_back(ephems[j]);
+                    break;
+                }
+            }
+        }
+
+        if (valid_obs.size() < 4)
+        {
+            LOG(ERROR) << "[gnss_comm::psr_pos_IF] GNSS observation not enough.\n";
+            return result;
+        }
+
+        std::vector<SatStatePtr> all_sat_states = sat_states(valid_obs, valid_ephems);
+
+        // Build IF pseudorange data per satellite
+        // For dual-freq satellites: use IF combination (ionosphere-free)
+        // For L1-only satellites: use L1 pseudorange (will still apply Klobuchar in psr_res)
+        const size_t num_sv = valid_obs.size();
+        std::vector<bool> use_if(num_sv, false);
+        std::vector<double> if_noise(num_sv, 1.0);   // noise amplification factor for IF
+
+        for (size_t i = 0; i < num_sv; ++i)
+        {
+            double f1 = 0.0, f2 = 0.0;
+            if (get_L1_L2_freqs(valid_obs[i], f1, f2))
+            {
+                use_if[i] = true;
+                if_noise[i] = if_noise_factor(f1, f2);
+            }
+        }
+
+        Eigen::Matrix<double, 7, 1> xyzt;
+        xyzt.setZero();
+        double dx_norm = 1.0;
+        uint32_t num_iter = 0;
+
+        while (num_iter < MAX_ITER_PVT && dx_norm > EPSILON_PVT)
+        {
+            Eigen::VectorXd b;
+            Eigen::MatrixXd G;
+            std::vector<Eigen::Vector2d> atmos_delay;
+            std::vector<Eigen::Vector2d> all_sv_azel;
+            // Use zero iono params for IF mode (iono delay is handled per-sat)
+            const std::vector<double> zero_iono(8, 0.0);
+            psr_res(xyzt, valid_obs, all_sat_states, zero_iono, b, G, atmos_delay, all_sv_azel);
+
+            std::vector<uint32_t> good_idx;
+            for (uint32_t i = 0; i < num_sv; ++i)
+            {
+                if (G.row(i).norm() <= 0)   continue;
+                if (all_sv_azel[i].y() > CUT_OFF_DEGREE / 180.0 * M_PI)
+                    good_idx.push_back(i);
+            }
+            int sys_mask[4] = {0, 0, 0, 0};
+            for (uint32_t i = 0; i < num_sv; ++i)
+            {
+                const uint32_t obs_sys = satsys(valid_obs[i]->sat, NULL);
+                sys_mask[sys2idx.at(obs_sys)] = 1;
+            }
+            uint32_t num_extra_constraint = 4;
+            for (uint32_t k = 0; k < 4; ++k)    num_extra_constraint -= sys_mask[k];
+            LOG_IF(FATAL, num_extra_constraint >= 4) << "[gnss_comm::psr_pos_IF] too many extra-clock constraints.\n";
+
+            const uint32_t good_num = good_idx.size();
+            LOG_IF(ERROR, good_num < 4) << "too few good obs: " << good_num;
+
+            Eigen::MatrixXd good_G(good_num + num_extra_constraint, 7);
+            Eigen::VectorXd good_b(good_num + num_extra_constraint);
+            Eigen::MatrixXd good_W(good_num + num_extra_constraint, good_num + num_extra_constraint);
+            good_W.setZero();
+            for (uint32_t i = 0; i < good_num; ++i)
+            {
+                const uint32_t origin_idx = good_idx[i];
+                const ObsPtr &this_obs = valid_obs[origin_idx];
+                good_G.row(i) = G.row(origin_idx);
+                good_b(i) = b(origin_idx);
+
+                const double sin_el = sin(all_sv_azel[origin_idx].y());
+                double weight = sin_el * sin_el;
+
+                int l1_idx = -1;
+                L1_freq(this_obs, &l1_idx);
+                LOG_IF(FATAL, l1_idx < 0) << "[gnss_comm::psr_pos_IF] no L1 observation found.\n";
+
+                if (this_obs->psr_std[l1_idx] > 0)
+                    weight /= (this_obs->psr_std[l1_idx] / 0.16);
+
+                const uint32_t obs_sys = satsys(this_obs->sat, NULL);
+                if (obs_sys == SYS_GPS || obs_sys == SYS_BDS)
+                    weight /= valid_ephems[origin_idx]->ura - 1;
+                else if (obs_sys == SYS_GAL)
+                    weight /= valid_ephems[origin_idx]->ura - 2;
+                else if (obs_sys == SYS_GLO)
+                    weight /= 4;
+
+                // Apply IF noise amplification
+                if (use_if[origin_idx])
+                {
+                    weight /= if_noise[origin_idx];
+                    // Remove ionospheric delay from residual since IF already eliminates it
+                    good_b(i) -= atmos_delay[origin_idx](0);  // subtract ion_delay from residual
+                }
+
+                good_W(i, i) = weight;
+            }
+            uint32_t tmp_count = good_num;
+            for (size_t k = 0; k < 4; ++k)
+            {
+                if (!sys_mask[k])
+                {
+                    good_G.row(tmp_count).setZero();
+                    good_G(tmp_count, k + 3) = 1.0;
+                    good_b(tmp_count) = 0;
+                    good_W(tmp_count, tmp_count) = 1000;
+                    ++tmp_count;
+                }
+            }
+
+            Eigen::VectorXd dx = -(good_G.transpose() * good_W * good_G).inverse() * good_G.transpose() * good_W * good_b;
+            dx_norm = dx.norm();
+            xyzt += dx;
+            ++num_iter;
+        }
+        if (num_iter == MAX_ITER_PVT)
+        {
+            return result;
+        }
+
+        result = xyzt;
+        return result;
+    }
+
+    Eigen::Matrix<double, 4, 1> dopp_vel_IF(const std::vector<ObsPtr> &obs,
+        const std::vector<EphemBasePtr> &ephems, Eigen::Vector3d &ref_ecef)
+    {
+        Eigen::Matrix<double, 4, 1> result;
+        result.setZero();
+
+        if (ref_ecef.norm() == 0 || std::isnan(ref_ecef.norm()))
+        {
+            Eigen::Matrix<double, 7, 1> psr_result = psr_pos_IF(obs, ephems);
+            if (psr_result.head<3>().norm() != 0)
+            {
+                ref_ecef = psr_result.head<3>();
+            }
+            else
+            {
+                LOG(ERROR) << "[gnss_comm::dopp_vel_IF] Unable to initialize reference position.\n";
+                return result;
+            }
+        }
+
+        std::vector<ObsPtr> valid_obs;
+        std::vector<EphemBasePtr> valid_ephems;
+        for (size_t i = 0; i < obs.size(); i++)
+        {
+            for (size_t j = 0; j < ephems.size(); j++)
+            {
+                if (obs[i]->sat == ephems[j]->sat)
+                {
+                    valid_obs.push_back(obs[i]);
+                    valid_ephems.push_back(ephems[j]);
+                    break;
+                }
+            }
+        }
+
+        if (valid_obs.size() < 4)
+        {
+            LOG(ERROR) << "[gnss_comm::dopp_vel_IF] GNSS observation not enough.\n";
+            return result;
+        }
+
+        std::vector<SatStatePtr> all_sat_states = sat_states(valid_obs, valid_ephems);
+
+        // Determine which satellites can use IF Doppler
+        const size_t num_sv = valid_obs.size();
+        std::vector<bool> use_if(num_sv, false);
+        std::vector<double> if_noise(num_sv, 1.0);
+
+        for (size_t i = 0; i < num_sv; ++i)
+        {
+            double f1 = 0.0, f2 = 0.0;
+            if (get_L1_L2_freqs(valid_obs[i], f1, f2))
+            {
+                use_if[i] = true;
+                if_noise[i] = if_noise_factor(f1, f2);
+            }
+        }
+
+        std::vector<Eigen::Vector2d> all_sv_azel;
+        for (uint32_t i = 0; i < all_sat_states.size(); ++i)
+        {
+            double azel[2] = {0, 0};
+            sat_azel(ref_ecef, all_sat_states[i]->pos, azel);
+            all_sv_azel.emplace_back(azel[0], azel[1]);
+        }
+
+        Eigen::Matrix<double, 4, 1> xyzt_dot;
+        xyzt_dot.setZero();
+        double dx_norm = 1.0;
+        uint32_t num_iter = 0;
+        uint32_t good_num = 0;
+        Eigen::MatrixXd good_G = Eigen::MatrixXd::Zero(0, 4);
+        Eigen::VectorXd good_b = Eigen::VectorXd::Zero(0);
+        Eigen::MatrixXd good_W = Eigen::MatrixXd::Zero(0, 0);
+
+        while (num_iter < MAX_ITER_PVT && dx_norm > EPSILON_PVT)
+        {
+            Eigen::MatrixXd G;
+            Eigen::VectorXd b;
+            dopp_res(xyzt_dot, ref_ecef, valid_obs, all_sat_states, b, G);
+
+            std::vector<uint32_t> good_idx;
+            for (uint32_t i = 0; i < num_sv; ++i)
+            {
+                if (G.row(i).norm() <= 0)   continue;
+                if (all_sv_azel[i].y() > CUT_OFF_DEGREE / 180.0 * M_PI)
+                    good_idx.push_back(i);
+            }
+            good_num = good_idx.size();
+            if (good_num < 4)
+            {
+                LOG(ERROR) << "[gnss_comm::dopp_vel_IF] too few good obs: " << good_num;
+                return result;
+            }
+            good_G = Eigen::MatrixXd::Zero(good_num, 4);
+            good_b = Eigen::VectorXd::Zero(good_num);
+            good_W = Eigen::MatrixXd::Zero(good_num, good_num);
+            for (uint32_t i = 0; i < good_num; ++i)
+            {
+                const uint32_t origin_idx = good_idx[i];
+                good_G.row(i) = G.row(origin_idx);
+                good_b(i) = b(origin_idx);
+                const double sin_el = sin(all_sv_azel[origin_idx].y());
+                double weight = sin_el * sin_el;
+
+                const ObsPtr &this_obs = valid_obs[origin_idx];
+                int l1_idx = -1;
+                const double obs_freq = L1_freq(this_obs, &l1_idx);
+                LOG_IF(FATAL, l1_idx < 0) << "[gnss_comm::dopp_vel_IF] no L1 observation found.\n";
+
+                if (this_obs->dopp_std[l1_idx] > 0)
+                {
+                    const double wavelength = LIGHT_SPEED / obs_freq;
+                    double dopp_std_mps = this_obs->dopp_std[l1_idx] * wavelength;
+                    weight /= (dopp_std_mps / 0.256);
+                }
+
+                const uint32_t obs_sys = satsys(this_obs->sat, NULL);
+                if (obs_sys == SYS_GPS || obs_sys == SYS_BDS)
+                    weight /= valid_ephems[origin_idx]->ura - 1;
+                else if (obs_sys == SYS_GAL)
+                    weight /= valid_ephems[origin_idx]->ura - 2;
+                else if (obs_sys == SYS_GLO)
+                    weight /= 2;
+
+                if (use_if[origin_idx])
+                    weight /= if_noise[origin_idx];
+
+                good_W(i, i) = weight;
+            }
+
+            Eigen::VectorXd dx = -(good_G.transpose() * good_W * good_G).inverse() * good_G.transpose() * good_W * good_b;
+            dx_norm = dx.norm();
+            xyzt_dot += dx;
+            ++num_iter;
+        }
+        if (num_iter == MAX_ITER_PVT)
+            LOG(WARNING) << "[gnss_comm::dopp_vel_IF] XYZT solver reached maximum iterations.\n";
+
+        Eigen::Matrix<double, 4, 4> cov_out = Eigen::Matrix<double, 4, 4>::Identity() * 1e2;
+        if (good_num >= 4)
+        {
+            const Eigen::MatrixXd normal = good_G.transpose() * good_W * good_G;
+            Eigen::FullPivLU<Eigen::MatrixXd> lu(normal);
+            if (lu.isInvertible())
+            {
+                cov_out = lu.inverse();
+            }
+        }
+        dopp_cov_set(cov_out);
+
+        result = xyzt_dot;
+        return result;
+    }
+}
