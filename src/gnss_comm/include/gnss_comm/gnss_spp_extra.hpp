@@ -16,52 +16,43 @@
 *
 * You should have received a copy of the GNU General Public License
 * along with gnss_comm. If not, see <http://www.gnu.org/licenses/>.
+*
+* gnss_spp_extra.hpp
+* Extended SPP functions that use both L1 and L2 band data (prefer L1, fallback L2)
+* for all four GNSS systems (GPS, GLONASS, Galileo, BeiDou).
+* Compared to gnss_spp.hpp which uses L1-only, these functions can also leverage
+* L2 observations when L1 is unavailable, increasing satellite availability.
 */
 
-#ifndef GNSS_SPS_HPP_
-#define GNSS_SPS_HPP_
+#ifndef GNSS_SPP_EXTRA_HPP_
+#define GNSS_SPP_EXTRA_HPP_
 
 #include <eigen3/Eigen/Dense>
 #include "gnss_constant.hpp"
-#include <mutex>
 
 namespace gnss_comm
 {
-    /* filter observation, only keep L1-observed Obs -----------------------------
+    /* filter observation, keep L1 or L2 Obs from four GNSS systems ------------
     * args   : std::vector<ObsPtr>&         obs                 I   GNSS observation data
     *          std::vector<EphemBasePtr>&   ephems              I   GNSS ephemeris data
-    * args   : std::vector<ObsPtr>&         L1_obs              I   GNSS L1 observation data
-    *          std::vector<EphemBasePtr>&   L1_ephems           I   GNSS L1 ephemeris data
+    * args   : std::vector<ObsPtr>&         L1L2_obs            O   filtered observation data
+    *          std::vector<EphemBasePtr>&   L1L2_ephems         O   filtered ephemeris data
     * return : void
     *-----------------------------------------------------------------------------*/
-    
-    extern Eigen::Matrix<double,4,4> dopp_cov;
-    extern std::mutex dopp_cov_mux;
-    bool dopp_cov_set(Eigen::Matrix<double,4,4> cov);
-    Eigen::Matrix<double,4,4> dopp_cov_get();
-
-    void filter_L1(const std::vector<ObsPtr> &obs, const std::vector<EphemBasePtr> &ephems,
-        std::vector<ObsPtr> &L1_obs, std::vector<EphemBasePtr> &L1_ephems);
-
-    /* filter observation, only keep dual-frequency (L1+L2) Obs -------------------
-    * args   : std::vector<ObsPtr>&         obs                 I   GNSS observation data
-    *          std::vector<EphemBasePtr>&   ephems              I   GNSS ephemeris data
-    * args   : std::vector<ObsPtr>&         IF_obs              O   GNSS dual-freq observation data
-    *          std::vector<EphemBasePtr>&   IF_ephems           O   GNSS dual-freq ephemeris data
-    * return : void
-    *-----------------------------------------------------------------------------*/
-    void filter_dual_freq(const std::vector<ObsPtr> &obs, const std::vector<EphemBasePtr> &ephems,
-        std::vector<ObsPtr> &IF_obs, std::vector<EphemBasePtr> &IF_ephems);
+    void filter_L1L2_extra(const std::vector<ObsPtr> &obs, const std::vector<EphemBasePtr> &ephems,
+        std::vector<ObsPtr> &L1L2_obs, std::vector<EphemBasePtr> &L1L2_ephems);
 
     /* calculate satellite states -----------------------------------------------
     * args   : std::vector<ObsPtr>&         obs                 I   GNSS observation data
     *          std::vector<EphemBasePtr>&   ephems              I   GNSS ephemeris data
     * return : std::vector<SatStatePtr>     satellite states
     *-----------------------------------------------------------------------------*/
-    std::vector<SatStatePtr> sat_states(const std::vector<ObsPtr> &obs, 
+    std::vector<SatStatePtr> sat_states_extra(const std::vector<ObsPtr> &obs,
         const std::vector<EphemBasePtr> &ephems);
-    
-    /* calculate pseudo-range residual and Jacobian -------------------------------
+
+    /* calculate pseudo-range residual and Jacobian (L1-prefer, L2-fallback) ----
+    * Tries L1 frequency first; if unavailable, falls back to L2.
+    * Ionospheric delay is scaled appropriately for the used frequency.
     * args   : Eigen::Matrix<double, 7, 1>&     rcv_state          I   receiver state
     *          std::vector<ObsPtr>&             obs                I   GNSS observations
     *          std::vector<SatStatePtr>&        all_sv_states      I   satellite states
@@ -69,48 +60,53 @@ namespace gnss_comm
     *          Eigen::VectorXd&                 res                O   pseudo-range residual
     *          Eigen::MatrixXd&                 J                  O   Jacobian
     *          std::vector<Eigen::Vector2d>&    atmos_delay        O   ion and tro delay
-    *          std::vector<Eigen::Vector2d>&    all_sv_azel        O   satellite azimuth and elevation (radius)
+    *          std::vector<Eigen::Vector2d>&    all_sv_azel        O   satellite azimuth and elevation
     * return : void
     *-----------------------------------------------------------------------------*/
-    void psr_res(const Eigen::Matrix<double, 7, 1> &rcv_state, const std::vector<ObsPtr> &obs, 
-        const std::vector<SatStatePtr> &all_sv_states, const std::vector<double> &iono_params, 
-        Eigen::VectorXd &res, Eigen::MatrixXd &J, std::vector<Eigen::Vector2d> &atmos_delay, 
+    void psr_res_extra(const Eigen::Matrix<double, 7, 1> &rcv_state, const std::vector<ObsPtr> &obs,
+        const std::vector<SatStatePtr> &all_sv_states, const std::vector<double> &iono_params,
+        Eigen::VectorXd &res, Eigen::MatrixXd &J, std::vector<Eigen::Vector2d> &atmos_delay,
         std::vector<Eigen::Vector2d> &all_sv_azel);
 
-    /* positioning by pseudo-range localization ----------------------------------
+    /* positioning by pseudo-range localization (L1/L2) -------------------------
     * args   : std::vector<ObsPtr>&         obs         I   GNSS observation data
     *          std::vector<EphemBasePtr>&   ephems      I   GNSS ephemeris data
     *          std::vector<double>&         iono_params I   ionosphere parameters
-    * return : receiver position in ECEF and four clock bias for 4 constellations 
+    * return : receiver position in ECEF and four clock bias for 4 constellations
     *-----------------------------------------------------------------------------*/
-    Eigen::Matrix<double, 7, 1> psr_pos(const std::vector<ObsPtr> &obs,
+    Eigen::Matrix<double, 7, 1> psr_pos_extra(const std::vector<ObsPtr> &obs,
         const std::vector<EphemBasePtr> &ephems, const std::vector<double> &iono_params);
 
-    /* calculate doppler residual and Jacobian -------------------------------
+    /* calculate doppler residual and Jacobian (L1-prefer, L2-fallback) ---------
     * args   : Eigen::Matrix<double, 4, 1>&     rcv_state          I   receiver state
     *          Eigen::Vector3d&                 rcv_ecef           I   receiver ECEF position
     *          std::vector<ObsPtr>&             obs                I   GNSS observations
     *          std::vector<SatStatePtr>&        all_sv_states      I   satellite states
-    *          Eigen::VectorXd&                 res                O   pseudo-range residual
+    *          Eigen::VectorXd&                 res                O   doppler residual
     *          Eigen::MatrixXd&                 J                  O   Jacobian
     * return : void
     *-----------------------------------------------------------------------------*/
-    void dopp_res(const Eigen::Matrix<double, 4, 1> &rcv_state, const Eigen::Vector3d &rcv_ecef,
-                  const std::vector<ObsPtr> &obs, const std::vector<SatStatePtr> &all_sv_states, 
-                  Eigen::VectorXd &res, Eigen::MatrixXd &J);
+    void dopp_res_extra(const Eigen::Matrix<double, 4, 1> &rcv_state, const Eigen::Vector3d &rcv_ecef,
+                      const std::vector<ObsPtr> &obs, const std::vector<SatStatePtr> &all_sv_states,
+                      Eigen::VectorXd &res, Eigen::MatrixXd &J);
 
-    /* calculate velocity by using Doppler measurement -------------------------------------------------
+    /* calculate velocity by using Doppler measurement (L1/L2) ------------------
     * args   : std::vector<ObsPtr>&         obs         I   GNSS observation data
     *          std::vector<EphemBasePtr>&   ephems      I   GNSS ephemeris data
     *          Eigen::Vector3d&             ref_ecef    IO  reference ECEF position, (0,0,0) if unknown
-    * return : receiver velocity in ECEF and clock bias changing rate + covariance(huimin)
-    *----------------------------------------------------------------------------------------------------*/
-    Eigen::Matrix<double, 4, 1> dopp_vel(const std::vector<ObsPtr> &obs, 
+    * return : receiver velocity in ECEF and clock bias changing rate
+    *-----------------------------------------------------------------------------*/
+    Eigen::Matrix<double, 4, 1> dopp_vel_extra(const std::vector<ObsPtr> &obs,
         const std::vector<EphemBasePtr> &ephems, Eigen::Vector3d &ref_ecef);
 
-    Eigen::Matrix<double, 4, 1> dopp_vel_GGLweight(const std::vector<ObsPtr> &obs,
+    /* calculate velocity by using Doppler with GGL weight (L1/L2) --------------
+    * args   : std::vector<ObsPtr>&         obs         I   GNSS observation data
+    *          std::vector<EphemBasePtr>&   ephems      I   GNSS ephemeris data
+    *          Eigen::Vector3d&             ref_ecef    IO  reference ECEF position
+    * return : receiver velocity in ECEF and clock bias changing rate
+    *-----------------------------------------------------------------------------*/
+    Eigen::Matrix<double, 4, 1> dopp_vel_GGLweight_extra(const std::vector<ObsPtr> &obs,
         const std::vector<EphemBasePtr> &ephems, Eigen::Vector3d &ref_ecef);
-
 }
 
 #endif

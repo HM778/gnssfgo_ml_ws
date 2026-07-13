@@ -13,9 +13,9 @@ Not searching for unused variables given on the command line.
 -- Detecting CXX compiler ABI info - done
 -- Detecting CXX compile features
 -- Detecting CXX compile features - done
--- Using CATKIN_DEVEL_PREFIX: /home/nvidia/Work/gnssfgo_ml_ws/devel/.private/catkin_tools_prebuild
--- Using CMAKE_PREFIX_PATH: /opt/ros/noetic
--- This workspace overlays: /opt/ros/noetic
+-- Using CATKIN_DEVEL_PREFIX: /home/nvidia/Work/gnssfgo_ml_ws/devel/.private/gnss_comm
+-- Using CMAKE_PREFIX_PATH: /home/nvidia/Work/gnssfgo_ml_ws/devel;/opt/ros/noetic
+-- This workspace overlays: /home/nvidia/Work/gnssfgo_ml_ws/devel;/opt/ros/noetic
 -- Found PythonInterp: /usr/bin/python3 (found suitable version "3.8.10", minimum required is "3")
 -- Using PYTHON_EXECUTABLE: /usr/bin/python3
 -- Using Debian Python package layout
@@ -23,7 +23,7 @@ Not searching for unused variables given on the command line.
 -- Using empy: /usr/lib/python3/dist-packages/em.py
 -- Using CATKIN_ENABLE_TESTING: ON
 -- Call enable_testing()
--- Using CATKIN_TEST_RESULTS_DIR: /home/nvidia/Work/gnssfgo_ml_ws/build/catkin_tools_prebuild/test_results
+-- Using CATKIN_TEST_RESULTS_DIR: /home/nvidia/Work/gnssfgo_ml_ws/build/gnss_comm/test_results
 -- Forcing gtest/gmock from source, though one was otherwise available.
 -- Found gtest sources under '/usr/src/googletest': gtests will be built
 -- Found gmock sources under '/usr/src/googletest': gmock will be built
@@ -32,6 +32,12 @@ Not searching for unused variables given on the command line.
 -- Using Python nosetests: /usr/bin/nosetests3
 -- catkin 0.8.12
 -- BUILD_SHARED_LIBS is on
+-- Using these message generators: gencpp;geneus;genlisp;gennodejs;genpy
+-- gnss_comm: 10 messages, 0 services
+-- No preference for use of exported glog CMake configuration set, and no hints for include/library directories provided. Defaulting to preferring an installed/exported glog CMake configuration if available.
+-- Failed to find installed glog CMake configuration, searching for glog build directories exported with CMake.
+-- Failed to find an installed/exported CMake configuration for glog, will perform search for installed glog components.
+-- Found Glog: /usr/include
 -- Configuring done
 -- Generating done
--- Build files have been written to: /home/nvidia/Work/gnssfgo_ml_ws/build/catkin_tools_prebuild
+-- Build files have been written to: /home/nvidia/Work/gnssfgo_ml_ws/build/gnss_comm

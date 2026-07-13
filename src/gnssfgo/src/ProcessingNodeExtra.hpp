@@ -342,7 +342,7 @@ public:
         if (can_psr)
         {
             const Eigen::Matrix<double, 7, 1> psr_result =
-                gnss_comm::psr_pos_IF(meas, local_ephem_array);
+                gnss_comm::psr_pos_extra(meas, local_ephem_array);
             pos_ecef = psr_result.head<3>();
             if (pos_ecef.norm() > 1e-3)
             {
@@ -374,7 +374,7 @@ public:
         }
 
         const Eigen::Vector4d doppler_est =
-            gnss_comm::dopp_vel_IF(meas, local_ephem_array, enu_ref_ecef);
+            gnss_comm::dopp_vel_extra(meas, local_ephem_array, enu_ref_ecef);
         const Eigen::Vector3d vel_xyz(doppler_est[0], doppler_est[1], doppler_est[2]);
 
         nav_msgs::Odometry local_dop_meas;

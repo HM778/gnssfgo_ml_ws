@@ -219,21 +219,6 @@ namespace gnss_comm_extra{
         return square_sigma;
     }
 
-    
-    /* get variance for pseudorange from a single satellite based on elevation */
-    double getVarofPr(double ele)
-    {
-        double p_c_ratio = 1; // 10
-        double a = 3 * p_c_ratio; 
-        double b = 3 * p_c_ratio;
-        double c = 0;
-        double d = 0;
-        double square_sigma = pow(a,2) + pow(b,2) / pow(sin(ele * D2R), 2) + pow(c,2) + pow(d,2);
-        // return 0.4;
-        // std::cout<<"var of pseudorange -> "<<var<<std::endl;
-        return square_sigma;
-    }
-
     /* get pseudorange double-differenced Jacobian matrix */
     void getPrDDJacobian(std::map<int,sv_info> sv_info_map,Eigen::Vector3d u_pose, Eigen::Vector3d base_pose, DDMeasurement dd_measurement, Eigen::MatrixXd& jacobian_matrix, int jac_row,Eigen::MatrixXd& weighting_matrix)
     {
@@ -367,18 +352,18 @@ namespace gnss_comm_extra{
     }
 
     /* get variance for carrier-phase from a single satellite based on elevation/SNR */
+    // 无论传入L1还是L2的观测数据，它都使用同一套经验模型和相同的固定参数来计算方差。
     double getVarofCp_ele_SNR(gnss_comm::ObsPtr single_sat_data,std::map<int,sv_info> sv_info_map)
     {
         Eigen::Matrix<double,4,1> parameters;
         parameters<<50.0, 30.0, 30.0, 10.0; // loosely coupled 
-        // parameters<<50.0, 30.0, 20.0, 30.0; // loosely coupled 
         double snr_1 = parameters(0); // T = 50
         double snr_A = parameters(1); // A = 30
         double snr_a = parameters(2);// a = 30
         double snr_0 = parameters(3); // F = 10
         const double snr_R = (!single_sat_data || single_sat_data->CN0.empty())
             ? std::numeric_limits<double>::quiet_NaN()
-            : single_sat_data->CN0[0];
+            : single_sat_data->CN0[0];  //统一频段
 
         const auto it = sv_info_map.find(int(single_sat_data->sat));
         const double elR = (it == sv_info_map.end())

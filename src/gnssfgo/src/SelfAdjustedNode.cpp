@@ -247,6 +247,7 @@ public:
 
         // Incrementally update satellite states for this epoch:
         // start from the last available result, then refresh/add current satellites.
+        // 更新卫星信息
         std::map<int, sv_info> local_sv_info_map = last_sv_info_map;
         
         if (gpsTimeValid(local_gpst_sec) || sysTimeValid(local_sys_time))

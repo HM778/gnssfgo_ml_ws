@@ -1,0 +1,34 @@
+[  0%] Built target std_msgs_generate_messages_cpp
+[  0%] Built target std_msgs_generate_messages_lisp
+[  0%] Built target std_msgs_generate_messages_eus
+[  0%] Built target std_msgs_generate_messages_py
+[  0%] Built target std_msgs_generate_messages_nodejs
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssPVTSolnMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssBestXYZMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_StampedFloat64Array
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssEphemMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssTimeMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssTimePulseInfoMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssMeasMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssObsMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssGloEphemMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssSvsMsg
+[ 68%] Built target gnss_comm_generate_messages_nodejs
+[ 68%] Built target gnss_comm_generate_messages_lisp
+[ 72%] Built target gnss_comm_generate_messages_eus
+[ 72%] Built target gnss_comm_generate_messages_py
+[ 89%] Built target gnss_comm_generate_messages_cpp
+[35m[1mScanning dependencies of target gnss_comm[0m
+[ 89%] Built target gnss_comm_generate_messages
+[ 91%] [32mBuilding CXX object CMakeFiles/gnss_comm.dir/src/gnss_spp_extra.cpp.o[0m
+[ 93%] [32mBuilding CXX object CMakeFiles/gnss_comm.dir/src/gnss_spp.cpp.o[0m
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnss_comm/src/gnss_spp.cpp:672:5:[m[K [01;31m[Kerror: [m[Kexpected ‘[01m[K}[m[K’ at end of input
+  672 |     [01;31m[K}[m[K
+      |     [01;31m[K^[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnss_comm/src/gnss_spp.cpp:29:1:[m[K [01;36m[Knote: [m[Kto match this ‘[01m[K{[m[K’
+   29 | [01;36m[K{[m[K
+      | [01;36m[K^[m[K
+make[2]: *** [CMakeFiles/gnss_comm.dir/build.make:76：CMakeFiles/gnss_comm.dir/src/gnss_spp.cpp.o] 错误 1
+make[2]: *** 正在等待未完成的任务....
+make[1]: *** [CMakeFiles/Makefile2:177：CMakeFiles/gnss_comm.dir/all] 错误 2
+make: *** [Makefile:141：all] 错误 2

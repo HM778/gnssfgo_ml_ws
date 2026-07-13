@@ -309,14 +309,14 @@ public:
 
             ceres::CostFunction* dd_pr_function =
             new ceres::AutoDiffCostFunction<DDPseudorangeFactor, 1, state_size, state_size>(
-                new DDPseudorangeFactor(tr_measurments[i], current_sv_info, reference_sv_info, 1.0));
+                new DDPseudorangeFactor(tr_measurments[i], current_sv_info, reference_sv_info, 1.0, tr_measurments[i].freq_idx));
             
             problem.AddResidualBlock(dd_pr_function, loss_function, state_array[prev_epoch_index], state_array[epoch_index]);
             
             
             ceres::CostFunction* dd_cp_function =
                 new ceres::AutoDiffCostFunction<TRDDCPFactor, 1, state_size, state_size>(
-                    new TRDDCPFactor(tr_measurments[i], current_sv_info, reference_sv_info, tr_measurments[i].tr_score));
+                    new TRDDCPFactor(tr_measurments[i], current_sv_info, reference_sv_info, tr_measurments[i].tr_score, tr_measurments[i].freq_idx));
             problem.AddResidualBlock(dd_cp_function, loss_function, state_array[prev_epoch_index], state_array[epoch_index]);
         }
 

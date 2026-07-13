@@ -1,0 +1,331 @@
+[35m[1mScanning dependencies of target SANode[0m
+[35m[1mScanning dependencies of target ground_truth_node[0m
+[ 25%] [32mBuilding CXX object CMakeFiles/SANode.dir/src/SelfAdjustedNode.cpp.o[0m
+[ 50%] [32mBuilding CXX object CMakeFiles/ground_truth_node.dir/src/ground_truth.cpp.o[0m
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:1[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/ProcessingNodeExtra.hpp:[m[K In member function ‘[01m[Kvoid ProcessingNodeExtra::range_meas_cb(const GnssMeasMsgConstPtr&)[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/ProcessingNodeExtra.hpp:345:28:[m[K [01;31m[Kerror: [m[K‘[01m[Kpsr_pos_extra[m[K’ is not a member of ‘[01m[Kgnss_comm[m[K’
+  345 |                 gnss_comm::[01;31m[Kpsr_pos_extra[m[K(meas, local_ephem_array);
+      |                            [01;31m[K^~~~~~~~~~~~~[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/ProcessingNodeExtra.hpp:377:24:[m[K [01;31m[Kerror: [m[K‘[01m[Kdopp_vel_extra[m[K’ is not a member of ‘[01m[Kgnss_comm[m[K’
+  377 |             gnss_comm::[01;31m[Kdopp_vel_extra[m[K(meas, local_ephem_array, enu_ref_ecef);
+      |                        [01;31m[K^~~~~~~~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/pseudorange_factor.hpp:17[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:[m[K In function ‘[01m[Kbool getValidCarrierPhase(const ObsPtr&, double&, int)[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:24:5:[m[K [01;31m[Kerror: [m[K‘[01m[Kfreq_idx[m[K’ was not declared in this scope
+   24 |     [01;31m[Kfreq_idx[m[K = -1;
+      |     [01;31m[K^~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/pseudorange_factor.hpp:17[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:[m[K In function ‘[01m[Kbool checkCarrierPhaseConsistency(DDMeasurement)[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:116:59:[m[K [01;31m[Kerror: [m[Kcannot bind non-const lvalue reference of type ‘[01m[Kdouble&[m[K’ to an rvalue of type ‘[01m[Kdouble[m[K’
+  116 |     if (!getValidCarrierPhase(DD_measurement.u_master_SV, [01;31m[Kidx_u_m[m[K, cp_u_m,check_freq) ||
+      |                                                           [01;31m[K^~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/pseudorange_factor.hpp:17[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:12:65:[m[K [01;36m[Knote: [m[Kin passing argument 2 of ‘[01m[Kbool getValidCarrierPhase(const ObsPtr&, double&, int)[m[K’
+   12 | bool getValidCarrierPhase(const gnss_comm::ObsPtr& obs, [01;36m[Kdouble& cp_cycle[m[K, int freq)
+      |                                                         [01;36m[K~~~~~~~~^~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/pseudorange_factor.hpp:17[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:117:53:[m[K [01;31m[Kerror: [m[Kcannot bind non-const lvalue reference of type ‘[01m[Kdouble&[m[K’ to an rvalue of type ‘[01m[Kdouble[m[K’
+  117 |         !getValidCarrierPhase(DD_measurement.u_iSV, [01;31m[Kidx_u_i[m[K, cp_u_i,check_freq) ||
+      |                                                     [01;31m[K^~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/pseudorange_factor.hpp:17[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:12:65:[m[K [01;36m[Knote: [m[Kin passing argument 2 of ‘[01m[Kbool getValidCarrierPhase(const ObsPtr&, double&, int)[m[K’
+   12 | bool getValidCarrierPhase(const gnss_comm::ObsPtr& obs, [01;36m[Kdouble& cp_cycle[m[K, int freq)
+      |                                                         [01;36m[K~~~~~~~~^~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/pseudorange_factor.hpp:17[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:118:59:[m[K [01;31m[Kerror: [m[Kcannot bind non-const lvalue reference of type ‘[01m[Kdouble&[m[K’ to an rvalue of type ‘[01m[Kdouble[m[K’
+  118 |         !getValidCarrierPhase(DD_measurement.r_master_SV, [01;31m[Kidx_r_m[m[K, cp_r_m,check_freq) ||
+      |                                                           [01;31m[K^~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/pseudorange_factor.hpp:17[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:12:65:[m[K [01;36m[Knote: [m[Kin passing argument 2 of ‘[01m[Kbool getValidCarrierPhase(const ObsPtr&, double&, int)[m[K’
+   12 | bool getValidCarrierPhase(const gnss_comm::ObsPtr& obs, [01;36m[Kdouble& cp_cycle[m[K, int freq)
+      |                                                         [01;36m[K~~~~~~~~^~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/pseudorange_factor.hpp:17[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:119:53:[m[K [01;31m[Kerror: [m[Kcannot bind non-const lvalue reference of type ‘[01m[Kdouble&[m[K’ to an rvalue of type ‘[01m[Kdouble[m[K’
+  119 |         !getValidCarrierPhase(DD_measurement.r_iSV, [01;31m[Kidx_r_i[m[K, cp_r_i,check_freq))
+      |                                                     [01;31m[K^~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/pseudorange_factor.hpp:17[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:12:65:[m[K [01;36m[Knote: [m[Kin passing argument 2 of ‘[01m[Kbool getValidCarrierPhase(const ObsPtr&, double&, int)[m[K’
+   12 | bool getValidCarrierPhase(const gnss_comm::ObsPtr& obs, [01;36m[Kdouble& cp_cycle[m[K, int freq)
+      |                                                         [01;36m[K~~~~~~~~^~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/pseudorange_factor.hpp:17[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:[m[K In function ‘[01m[Kdouble getFreqIndex(const ObsPtr&, int, double&, const sv_info*)[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:139:5:[m[K [01;31m[Kerror: [m[K‘[01m[Kidx[m[K’ was not declared in this scope; did you mean ‘[01m[Kindex[m[K’?
+  139 |     [01;31m[Kidx[m[K = -1;
+      |     [01;31m[K^~~[m[K
+      |     [32m[Kindex[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:142:9:[m[K [01;31m[Kerror: [m[K‘[01m[Kfreq[m[K’ was not declared in this scope; did you mean ‘[01m[Kfree[m[K’?
+  142 |     if ([01;31m[Kfreq[m[K == 1)
+      |         [01;31m[K^~~~[m[K
+      |         [32m[Kfree[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/carrier_phase_factor.hpp:15[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:29[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/gnss_comm_extra.h:[m[K In function ‘[01m[Kstd::vector<gnss_comm_extra::CorrectedPseudorangeMeasurement> gnss_comm_extra::buildCorrectedPseudorangeMeasurements(const std::vector<std::shared_ptr<gnss_comm::Obs> >&, const std::vector<std::shared_ptr<gnss_comm::EphemBase> >&, const Vector3d&, bool, const std::vector<double>&, int)[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/gnss_comm_extra.h:158:48:[m[K [01;31m[Kerror: [m[Kcannot bind non-const lvalue reference of type ‘[01m[Kdouble&[m[K’ to an rvalue of type ‘[01m[Kdouble[m[K’
+  158 |             getFreqIndex(single_obs, freq_sel, [01;31m[Kfreq_idx[m[K, lamda_dummy, lamda_l2_dummy);
+      |                                                [01;31m[K^~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/pseudorange_factor.hpp:17[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/checking.hpp:137:80:[m[K [01;36m[Knote: [m[Kin passing argument 3 of ‘[01m[Kdouble getFreqIndex(const ObsPtr&, int, double&, const sv_info*)[m[K’
+  137 | inline double getFreqIndex(const gnss_comm::ObsPtr& obs, int freq_idx, [01;36m[Kdouble& lamda[m[K, const sv_info* info = nullptr)
+      |                                                                        [01;36m[K~~~~~~~~^~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/carrier_phase_factor.hpp:15[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:29[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/gnss_comm_extra.h:[m[K In function ‘[01m[Kvoid gnss_comm_extra::getCpDDJacobian(std::map<int, sv_info>, Eigen::Vector3d, Eigen::Vector3d, DDMeasurement, Eigen::MatrixXd&, int, int, Eigen::MatrixXd&)[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/../tools/gnss_comm_extra.h:341:82:[m[K [01;31m[Kerror: [m[K‘[01m[Kstd::map<int, sv_info>::mapped_type[m[K’ {aka ‘[01m[Kstruct sv_info[m[K’} has no member named ‘[01m[Klamda[m[K’; did you mean ‘[01m[Klamda_l1[m[K’?
+  341 |         jacobian_matrix(jac_row, 3 + carrier_phase_index) = sv_info_map[r_m_sat].[01;31m[Klamda[m[K;
+      |                                                                                  [01;31m[K^~~~~[m[K
+      |                                                                                  [32m[Klamda_l1[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:33[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../tools/differential_functions.hpp:[m[K In function ‘[01m[Kvoid findSatellitewithSameId(double, std::vector<std::shared_ptr<gnss_comm::Obs> >, gnss_comm::ObsPtr&, int)[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../tools/differential_functions.hpp:128:46:[m[K [01;31m[Kerror: [m[K‘[01m[Ksearch_l1[m[K’ was not declared in this scope
+  128 |             gnss_comm::L1_freq(gnss_data[i],&[01;31m[Ksearch_l1[m[K);
+      |                                              [01;31m[K^~~~~~~~~[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../tools/differential_functions.hpp:129:46:[m[K [01;31m[Kerror: [m[K‘[01m[Ksearch_l2[m[K’ was not declared in this scope
+  129 |             gnss_comm::L2_freq(gnss_data[i],&[01;31m[Ksearch_l2[m[K);
+      |                                              [01;31m[K^~~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:[m[K In member function ‘[01m[Kbool FactorGraph::setARStateMemoryAndInitialize()[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:689:88:[m[K [01;31m[Kerror: [m[Ktoo few arguments to function ‘[01m[Kvoid findSatellitewithSameId(double, std::vector<std::shared_ptr<gnss_comm::Obs> >, gnss_comm::ObsPtr&, int)[m[K’
+  689 |                     findSatellitewithSameId(u_master_sv->sat, st_gnss_data, r_master_sv[01;31m[K)[m[K;
+      |                                                                                        [01;31m[K^[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:33[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../tools/differential_functions.hpp:121:6:[m[K [01;36m[Knote: [m[Kdeclared here
+  121 | void [01;36m[KfindSatellitewithSameId[m[K(double id, std::vector<gnss_comm::ObsPtr> gnss_data, gnss_comm::ObsPtr& same_id_sv, int freq_idx)
+      |      [01;36m[K^~~~~~~~~~~~~~~~~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:[m[K In member function ‘[01m[Kbool FactorGraph::solveAmbiguityResolutionFixedSolution()[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:1372:84:[m[K [01;31m[Kerror: [m[Ktoo few arguments to function ‘[01m[Kvoid findSatellitewithSameId(double, std::vector<std::shared_ptr<gnss_comm::Obs> >, gnss_comm::ObsPtr&, int)[m[K’
+ 1372 |                 findSatellitewithSameId(u_master_sv->sat, st_gnss_data, r_master_sv[01;31m[K)[m[K;
+      |                                                                                    [01;31m[K^[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:33[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../tools/differential_functions.hpp:121:6:[m[K [01;36m[Knote: [m[Kdeclared here
+  121 | void [01;36m[KfindSatellitewithSameId[m[K(double id, std::vector<gnss_comm::ObsPtr> gnss_data, gnss_comm::ObsPtr& same_id_sv, int freq_idx)
+      |      [01;36m[K^~~~~~~~~~~~~~~~~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:[m[K In member function ‘[01m[Kbool FactorGraph::solveAmbiguityResolutionViaCovPropogation()[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:1579:84:[m[K [01;31m[Kerror: [m[Ktoo few arguments to function ‘[01m[Kvoid findSatellitewithSameId(double, std::vector<std::shared_ptr<gnss_comm::Obs> >, gnss_comm::ObsPtr&, int)[m[K’
+ 1579 |                 findSatellitewithSameId(u_master_sv->sat, st_gnss_data, r_master_sv[01;31m[K)[m[K;
+      |                                                                                    [01;31m[K^[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:33[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../tools/differential_functions.hpp:121:6:[m[K [01;36m[Knote: [m[Kdeclared here
+  121 | void [01;36m[KfindSatellitewithSameId[m[K(double id, std::vector<gnss_comm::ObsPtr> gnss_data, gnss_comm::ObsPtr& same_id_sv, int freq_idx)
+      |      [01;36m[K^~~~~~~~~~~~~~~~~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:[m[K In member function ‘[01m[Kbool SelfAdjustedFactorGraph::addTRDDCPFactors()[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:153:43:[m[K [01;31m[Kerror: [m[K‘[01m[Kit[m[K’ was not declared in this scope; did you mean ‘[01m[Ki[m[K’?
+  153 |                 while (i <= windowSize && [01;31m[Kit[m[K != gnss_raw_map.begin())
+      |                                           [01;31m[K^~[m[K
+      |                                           [32m[Ki[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:158:40:[m[K [01;31m[Kerror: [m[K‘[01m[Kusing element_type = struct gnss_comm::Obs[m[K’ {aka ‘[01m[Kstruct gnss_comm::Obs[m[K’} has no member named ‘[01m[Kfreq[m[K’; did you mean ‘[01m[Kfreqs[m[K’?
+  158 |                     for(int j=0;j<obs->[01;31m[Kfreq[m[K.size();j++)
+      |                                        [01;31m[K^~~~[m[K
+      |                                        [32m[Kfreqs[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:180:40:[m[K [01;31m[Kerror: [m[K‘[01m[Kfreq_idx[m[K’ was not declared in this scope
+  180 |                     tr_meas.freq_idx = [01;31m[Kfreq_idx[m[K;
+      |                                        [01;31m[K^~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:[m[K In member function ‘[01m[Kbool SelfAdjustedFactorGraph::ObservationCheck()[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:391:27:[m[K [01;31m[Kerror: [m[K‘[01m[Ksat_lock_check[m[K’ was not declared in this scope; did you mean ‘[01m[Ksat_lock_check_l1[m[K’?
+  391 |         for (auto& pair : [01;31m[Ksat_lock_check[m[K)
+      |                           [01;31m[K^~~~~~~~~~~~~~[m[K
+      |                           [32m[Ksat_lock_check_l1[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:404:20:[m[K [01;31m[Kerror: [m[K‘[01m[Ksat_lock_check[m[K’ was not declared in this scope; did you mean ‘[01m[Ksat_lock_check_l1[m[K’?
+  404 |                 if([01;31m[Ksat_lock_check[m[K.find(sat_id) == sat_lock_check.end() )
+      |                    [01;31m[K^~~~~~~~~~~~~~[m[K
+      |                    [32m[Ksat_lock_check_l1[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:418:47:[m[K [01;31m[Kerror: [m[Kexpected ‘[01m[K;[m[K’ before ‘[01m[K}[m[K’ token
+  418 |                     cycleSlipDetect(sat_id, 1)
+      |                                               [01;31m[K^[m[K
+      |                                               [32m[K;[m[K
+  419 |                 [32m[K}[m[K
+      |                 [32m[K~[m[K                              
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:422:47:[m[K [01;31m[Kerror: [m[Kexpected ‘[01m[K;[m[K’ before ‘[01m[K}[m[K’ token
+  422 |                     cycleSlipDetect(sat_id, 2)
+      |                                               [01;31m[K^[m[K
+      |                                               [32m[K;[m[K
+  423 |                 [32m[K}[m[K
+      |                 [32m[K~[m[K                              
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:429:17:[m[K [01;31m[Kerror: [m[K‘[01m[Ksat_lock_check[m[K’ was not declared in this scope; did you mean ‘[01m[Ksat_lock_check_l1[m[K’?
+  429 |                 [01;31m[Ksat_lock_check[m[K[sat_id] = true;
+      |                 [01;31m[K^~~~~~~~~~~~~~[m[K
+      |                 [32m[Ksat_lock_check_l1[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:433:30:[m[K [01;31m[Kerror: [m[K‘[01m[Ksat_lock_check[m[K’ was not declared in this scope; did you mean ‘[01m[Ksat_lock_check_l1[m[K’?
+  433 |             for(auto& pair : [01;31m[Ksat_lock_check[m[K)
+      |                              [01;31m[K^~~~~~~~~~~~~~[m[K
+      |                              [32m[Ksat_lock_check_l1[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:443:5:[m[K [01;35m[Kwarning: [m[Kno return statement in function returning non-void [[01;35m[K-Wreturn-type[m[K]
+  443 |     [01;35m[K}[m[K
+      |     [01;35m[K^[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:[m[K In member function ‘[01m[Kbool SelfAdjustedFactorGraph::cycleSlipDetect(int, int)[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:448:41:[m[K [01;31m[Kerror: [m[Kexpected identifier before ‘[01m[Kint[m[K’
+  448 |         auto mark_slip = [this, sat_id, [01;31m[Kint[m[K freq]() {
+      |                                         [01;31m[K^~~[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:[m[K In lambda function:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:449:16:[m[K [01;31m[Kerror: [m[K‘[01m[Kfreq[m[K’ is not captured
+  449 |             if([01;31m[Kfreq[m[K == 1)
+      |                [01;31m[K^~~~[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:448:49:[m[K [01;36m[Knote: [m[Kthe lambda has no capture-default
+  448 |         auto mark_slip = [this, sat_id, int freq[01;36m[K][m[K() {
+      |                                                 [01;36m[K^[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:446:42:[m[K [01;36m[Knote: [m[K‘[01m[Kint freq[m[K’ declared here
+  446 |     bool cycleSlipDetect(int sat_id, [01;36m[Kint freq[m[K)
+      |                                      [01;36m[K~~~~^~~~[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:[m[K In member function ‘[01m[Kbool SelfAdjustedFactorGraph::cycleSlipDetect(int, int)[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:479:70:[m[K [01;31m[Kerror: [m[Ktoo few arguments to function ‘[01m[Kvoid findSatellitewithSameId(double, std::vector<std::shared_ptr<gnss_comm::Obs> >, gnss_comm::ObsPtr&, int)[m[K’
+  479 |         findSatellitewithSameId(sat_id, allobs_prev->second, prev_obs[01;31m[K)[m[K;
+      |                                                                      [01;31m[K^[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:33[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../tools/differential_functions.hpp:121:6:[m[K [01;36m[Knote: [m[Kdeclared here
+  121 | void [01;36m[KfindSatellitewithSameId[m[K(double id, std::vector<gnss_comm::ObsPtr> gnss_data, gnss_comm::ObsPtr& same_id_sv, int freq_idx)
+      |      [01;36m[K^~~~~~~~~~~~~~~~~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:480:69:[m[K [01;31m[Kerror: [m[Ktoo few arguments to function ‘[01m[Kvoid findSatellitewithSameId(double, std::vector<std::shared_ptr<gnss_comm::Obs> >, gnss_comm::ObsPtr&, int)[m[K’
+  480 |         findSatellitewithSameId(sat_id, allobs_now->second, curr_obs[01;31m[K)[m[K;
+      |                                                                     [01;31m[K^[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:33[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../tools/differential_functions.hpp:121:6:[m[K [01;36m[Knote: [m[Kdeclared here
+  121 | void [01;36m[KfindSatellitewithSameId[m[K(double id, std::vector<gnss_comm::ObsPtr> gnss_data, gnss_comm::ObsPtr& same_id_sv, int freq_idx)
+      |      [01;36m[K^~~~~~~~~~~~~~~~~~~~~~~[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:595:117:[m[K [01;31m[Kerror: [m[Kinvalid use of member function ‘[01m[Kbool FactorGraph::lambda(int, int, const double*, const double*, double*, double*)[m[K’ (did you forget the ‘[01m[K()[m[K’ ?)
+  595 |         const double delta_cp_pred = ((curr_vel + prev_vel).dot(los) * (curr_time_sec - prev_time_sec) / 10.0)/(2 * [01;31m[Klambda[m[K);
+      |                                                                                                                     [01;31m[K^~~~~~[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:598:16:[m[K [01;31m[Kerror: [m[Kconflicting declaration ‘[01m[Kdouble sat_cp_const[m[K’
+  598 |         double [01;31m[Ksat_cp_const[m[K = (freq==1) ? sat_cp_const_l1[sat_id] : ((freq==2) ? sat_cp_const_l2[sat_id] : 0.0)
+      |                [01;31m[K^~~~~~~~~~~~[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:550:30:[m[K [01;36m[Knote: [m[Kprevious declaration as ‘[01m[Kstd::map<int, double> sat_cp_const[m[K’
+  550 |         std::map<int,double> [01;36m[Ksat_cp_const[m[K;
+      |                              [01;36m[K^~~~~~~~~~~~[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:604:21:[m[K [01;31m[Kerror: [m[K‘[01m[Kdelta_cp_obs[m[K’ was not declared in this scope; did you mean ‘[01m[Kdelta_cp_pred[m[K’?
+  604 |         if(std::abs([01;31m[Kdelta_cp_obs[m[K - delta_cp_pred) > kCycleSlipThresholdCycle)
+      |                     [01;31m[K^~~~~~~~~~~~[m[K
+      |                     [32m[Kdelta_cp_pred[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:[m[K In member function ‘[01m[Kvoid SelfAdjustedTR::synchronizeAndInput()[m[K’:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:275:28:[m[K [01;31m[Kerror: [m[K‘[01m[Kstruct sv_info[m[K’ has no member named ‘[01m[Klamda[m[K’; did you mean ‘[01m[Klamda_l1[m[K’?
+  275 |                         sv.[01;31m[Klamda[m[K = (sv.freq_l1 > 0.0) ? LIGHT_SPEED / sv.freq_l1 : 0.0;
+      |                            [01;31m[K^~~~~[m[K
+      |                            [32m[Klamda_l1[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:320:24:[m[K [01;31m[Kerror: [m[K‘[01m[Kstruct sv_info[m[K’ has no member named ‘[01m[Klamda[m[K’; did you mean ‘[01m[Klamda_l1[m[K’?
+  320 |                     sv.[01;31m[Klamda[m[K = LIGHT_SPEED / sv.freq_l1;
+      |                        [01;31m[K^~~~~[m[K
+      |                        [32m[Klamda_l1[m[K
+[ 75%] [32m[1mLinking CXX executable /home/nvidia/Work/gnssfgo_ml_ws/devel/.private/gnssfgo/lib/gnssfgo/ground_truth_node[0m
+[ 75%] Built target ground_truth_node
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:29[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/carrier_phase_factor.hpp:[m[K In lambda function:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/carrier_phase_factor.hpp:84:28:[m[K [01;35m[Kwarning: [m[Kcontrol reaches end of non-void function [[01;35m[K-Wreturn-type[m[K]
+   84 |         auto trddcp_cp_m = [01;35m[K[this](const gnss_comm::ObsPtr& o, const sv_info& sv) -> double {[m[K
+      |                            [01;35m[K^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[m[K
+   85 | [01;35m[K            int li = -1;[m[K
+      |             [01;35m[K~~~~~~~~~~~~[m[K    
+   86 | [01;35m[K            if(freq_idx == 1)[m[K
+      |             [01;35m[K~~~~~~~~~~~~~~~~~[m[K
+   87 | [01;35m[K            {[m[K
+      |             [01;35m[K~[m[K               
+   88 | [01;35m[K                L1_freq(o, &li);[m[K
+      |                 [01;35m[K~~~~~~~~~~~~~~~~[m[K
+   89 | [01;35m[K                return (li >= 0 && li < (int)o->cp.size()) ? (o->cp[li] * sv.lamda_l1) : 0.0;[m[K
+      |                 [01;35m[K~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[m[K
+   90 | [01;35m[K            }[m[K
+      |             [01;35m[K~[m[K               
+   91 | [01;35m[K            else if(freq_idx == 2)[m[K
+      |             [01;35m[K~~~~~~~~~~~~~~~~~~~~~~[m[K
+   92 | [01;35m[K            {[m[K
+      |             [01;35m[K~[m[K               
+   93 | [01;35m[K                L2_freq(o, &li);[m[K
+      |                 [01;35m[K~~~~~~~~~~~~~~~~[m[K
+   94 | [01;35m[K                return (li >= 0 && li < (int)o->cp.size()) ? (o->cp[li] * sv.lamda_l2) : 0.0;[m[K
+      |                 [01;35m[K~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[m[K
+   95 | [01;35m[K            }[m[K
+      |             [01;35m[K~[m[K               
+   96 | 
+      |                             
+   97 | [01;35m[K        }[m[K;
+      |         [01;35m[K~[m[K                   
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/carrier_phase_factor.hpp:[m[K In lambda function:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/carrier_phase_factor.hpp:84:28:[m[K [01;35m[Kwarning: [m[Kcontrol reaches end of non-void function [[01;35m[K-Wreturn-type[m[K]
+   84 |         auto trddcp_cp_m = [01;35m[K[this](const gnss_comm::ObsPtr& o, const sv_info& sv) -> double {[m[K
+      |                            [01;35m[K^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[m[K
+   85 | [01;35m[K            int li = -1;[m[K
+      |             [01;35m[K~~~~~~~~~~~~[m[K    
+   86 | [01;35m[K            if(freq_idx == 1)[m[K
+      |             [01;35m[K~~~~~~~~~~~~~~~~~[m[K
+   87 | [01;35m[K            {[m[K
+      |             [01;35m[K~[m[K               
+   88 | [01;35m[K                L1_freq(o, &li);[m[K
+      |                 [01;35m[K~~~~~~~~~~~~~~~~[m[K
+   89 | [01;35m[K                return (li >= 0 && li < (int)o->cp.size()) ? (o->cp[li] * sv.lamda_l1) : 0.0;[m[K
+      |                 [01;35m[K~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[m[K
+   90 | [01;35m[K            }[m[K
+      |             [01;35m[K~[m[K               
+   91 | [01;35m[K            else if(freq_idx == 2)[m[K
+      |             [01;35m[K~~~~~~~~~~~~~~~~~~~~~~[m[K
+   92 | [01;35m[K            {[m[K
+      |             [01;35m[K~[m[K               
+   93 | [01;35m[K                L2_freq(o, &li);[m[K
+      |                 [01;35m[K~~~~~~~~~~~~~~~~[m[K
+   94 | [01;35m[K                return (li >= 0 && li < (int)o->cp.size()) ? (o->cp[li] * sv.lamda_l2) : 0.0;[m[K
+      |                 [01;35m[K~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[m[K
+   95 | [01;35m[K            }[m[K
+      |             [01;35m[K~[m[K               
+   96 | 
+      |                             
+   97 | [01;35m[K        }[m[K;
+      |         [01;35m[K~[m[K                   
+make[2]: *** [CMakeFiles/SANode.dir/build.make:63：CMakeFiles/SANode.dir/src/SelfAdjustedNode.cpp.o] 错误 1
+make[1]: *** [CMakeFiles/Makefile2:182：CMakeFiles/SANode.dir/all] 错误 2
+make: *** [Makefile:141：all] 错误 2
