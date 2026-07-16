@@ -1,15 +1,16 @@
 [35m[1mScanning dependencies of target SANode[0m
-[35m[1mScanning dependencies of target ground_truth_node[0m
-[ 25%] [32mBuilding CXX object CMakeFiles/SANode.dir/src/SelfAdjustedNode.cpp.o[0m
-[ 50%] [32mBuilding CXX object CMakeFiles/ground_truth_node.dir/src/ground_truth.cpp.o[0m
+[ 50%] Built target ground_truth_node
+[ 75%] [32mBuilding CXX object CMakeFiles/SANode.dir/src/SelfAdjustedNode.cpp.o[0m
 In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:1[m[K:
 [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/ProcessingNodeExtra.hpp:[m[K In member function ‘[01m[Kvoid ProcessingNodeExtra::range_meas_cb(const GnssMeasMsgConstPtr&)[m[K’:
-[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/ProcessingNodeExtra.hpp:345:28:[m[K [01;31m[Kerror: [m[K‘[01m[Kpsr_pos_extra[m[K’ is not a member of ‘[01m[Kgnss_comm[m[K’
-  345 |                 gnss_comm::[01;31m[Kpsr_pos_extra[m[K(meas, local_ephem_array);
-      |                            [01;31m[K^~~~~~~~~~~~~[m[K
-[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/ProcessingNodeExtra.hpp:377:24:[m[K [01;31m[Kerror: [m[K‘[01m[Kdopp_vel_extra[m[K’ is not a member of ‘[01m[Kgnss_comm[m[K’
-  377 |             gnss_comm::[01;31m[Kdopp_vel_extra[m[K(meas, local_ephem_array, enu_ref_ecef);
-      |                        [01;31m[K^~~~~~~~~~~~~~[m[K
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/ProcessingNodeExtra.hpp:346:65:[m[K [01;31m[Kerror: [m[Ktoo few arguments to function ‘[01m[KEigen::Matrix<double, 7, 1> gnss_comm::psr_pos_extra(const std::vector<std::shared_ptr<gnss_comm::Obs> >&, const std::vector<std::shared_ptr<gnss_comm::EphemBase> >&, const std::vector<double>&)[m[K’
+  346 |                 gnss_comm::psr_pos_extra(meas, local_ephem_array[01;31m[K)[m[K;
+      |                                                                 [01;31m[K^[m[K
+In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/ProcessingNodeExtra.hpp:38[m[K,
+                 from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:1[m[K:
+[01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnss_comm/include/gnss_comm/gnss_spp_extra.hpp:77:33:[m[K [01;36m[Knote: [m[Kdeclared here
+   77 |     Eigen::Matrix<double, 7, 1> [01;36m[Kpsr_pos_extra[m[K(const std::vector<ObsPtr> &obs,
+      |                                 [01;36m[K^~~~~~~~~~~~~[m[K
 In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/../factors/pseudorange_factor.hpp:17[m[K,
                  from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:27[m[K,
                  from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
@@ -261,8 +262,6 @@ In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/Se
   320 |                     sv.[01;31m[Klamda[m[K = LIGHT_SPEED / sv.freq_l1;
       |                        [01;31m[K^~~~~[m[K
       |                        [32m[Klamda_l1[m[K
-[ 75%] [32m[1mLinking CXX executable /home/nvidia/Work/gnssfgo_ml_ws/devel/.private/gnssfgo/lib/gnssfgo/ground_truth_node[0m
-[ 75%] Built target ground_truth_node
 In file included from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/base_factorgraph.hpp:29[m[K,
                  from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/../include/models/SelfAdjustedFactorGraph.hpp:27[m[K,
                  from [01m[K/home/nvidia/Work/gnssfgo_ml_ws/src/gnssfgo/src/SelfAdjustedNode.cpp:3[m[K:

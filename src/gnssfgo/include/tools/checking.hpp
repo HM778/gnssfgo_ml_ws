@@ -9,7 +9,7 @@
 #include "../datatype.h"
 
 // 检查观测数据中载波相位是否有效
-bool getValidCarrierPhase(const gnss_comm::ObsPtr& obs, double& cp_cycle, int freq)
+bool getValidCarrierPhase(const gnss_comm::ObsPtr& obs,int& freq_idx, double& cp_cycle, int freq)
 {
     if (!obs)
     {
@@ -131,25 +131,6 @@ bool checkCarrierPhaseConsistency(DDMeasurement DD_measurement)
     }
 
     return true;
-}
-
-// freq_idx: 1 = L1 (default), 2 = L2,
-inline double getFreqIndex(const gnss_comm::ObsPtr& obs, int freq_idx, double& lamda, const sv_info* info = nullptr)
-{
-    idx = -1;
-    lamda = 0.0;
-    double cp_obs = -1.0;
-    if (freq == 1)
-    {
-        cp_obs = gnss_comm::L1_freq(obs, &idx);
-        if (info) lamda = info->lamda_l1;
-    }
-    else if (freq == 2)
-    {
-        cp_obs = gnss_comm::L2_freq(obs, &idx);
-        if (info) lamda = info->lamda_l2;
-    }
-    return cp_obs;
 }
 
 #endif // CHECKING_HPP

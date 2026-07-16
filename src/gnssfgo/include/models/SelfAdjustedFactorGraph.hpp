@@ -39,7 +39,7 @@ public:
     std::map<double, Eigen::Matrix<double, 7, 1>> Ps_full_state; // 保存完整状态（位置+钟差）
 
     std::map<int,int> sat_lock_count_l1,sat_lock_count_l2;  // 卫星连续观测计数器L1,L2频段分开统计
-    std::map<int,bool> sat_lock_check_l1,sat_lock_check_l2; // 卫星连续观测检查标志
+    std::map<int,bool> sat_lock_check,sat_lock_check_l1,sat_lock_check_l2; // 卫星连续观测检查标志
     std::map<int,double> sat_cp_const_l1,sat_cp_const_l2;   // 卫星TR锁定状态
     std::map<int,double> sat_const_residual_l1,sat_const_residual_l2; // 预拟合残差基线（按卫星维护）
 
@@ -150,19 +150,20 @@ public:
             {
                 auto ref_iter = curr_iter;
                 int i = 1;
-                while (i <= windowSize && it != gnss_raw_map.begin())
+                while (i <= windowSize && ref_iter != gnss_raw_map.begin())
                 {
                     // ROS_INFO("FIND TR FACTOR: Satellite %d, Epoch Gap: %d", obs->sat, i);
                     --ref_iter; // move to previous epoch; i means epoch-gap (>=1)
                     //构建双差因子L1/L2：
-                    for(int j=0;j<obs->freq.size();j++)
+                    int freq_idx;
+                    for(int j=0;j<obs->freqs.size();j++)
                     {
                         int l1_idx=-1,l2_idx=-1;
                         L1_freq(obs,&l1_idx);
                         L2_freq(obs,&l2_idx);
 
-                        int freq_idx = -1;
-
+                        freq_idx = -1;
+                        
                         // l1_idx/l2_idx 可能都是1
                         if(l1_idx >= 0 && j == l1_idx)
                         {
@@ -415,11 +416,11 @@ public:
                 L2_freq(iter->second[i],&l2_idx);
                 if(l1_idx >= 0)
                 {
-                    cycleSlipDetect(sat_id, 1)
+                    cycleSlipDetect(sat_id, 1);
                 }
                 if(l2_idx >= 0)
                 {
-                    cycleSlipDetect(sat_id, 2)
+                    cycleSlipDetect(sat_id, 2);
                 }
                 if(l1_idx < 0 && l2_idx < 0)
                 {

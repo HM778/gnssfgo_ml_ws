@@ -11,6 +11,7 @@
 #include <gnss_comm/GnssGloEphemMsg.h>
 #include <gnss_comm/gnss_utility.hpp>
 #include <gnss_comm/gnss_spp.hpp>
+#include <gnss_comm/gnss_spp_extra.hpp>
 #include <gnss_comm/gnss_constant.hpp>
 
 #include <cmath>
@@ -139,7 +140,7 @@ namespace gnss_comm_extra{
         std::vector<Eigen::Vector2d> all_sv_azel;
         // saastamoninen model for tropospheric delay, 
         // klobuchar model for ionospheric delay, 
-        gnss_comm::psr_res(receiver_state, matched_obs, sat_states, iono_params, residuals, jacobian, atmos_delay, all_sv_azel);
+        gnss_comm::psr_res_extra(receiver_state, matched_obs, sat_states, iono_params, residuals, jacobian, atmos_delay, all_sv_azel);
 
         corrected_measurements.reserve(matched_obs.size());
         for (size_t i = 0; i < matched_obs.size(); ++i)
@@ -154,8 +155,7 @@ namespace gnss_comm_extra{
             }
 
             int freq_idx = -1;
-            double lamda_dummy = 0.0, lamda_l2_dummy = 0.0;
-            getFreqIndex(single_obs, freq_sel, freq_idx, lamda_dummy, lamda_l2_dummy);
+            
             if (freq_idx < 0 || freq_idx >= static_cast<int>(single_obs->psr.size()) || single_obs->psr[freq_idx] <= 0.0)
             {
                 corrected_measurements.push_back(measurement);

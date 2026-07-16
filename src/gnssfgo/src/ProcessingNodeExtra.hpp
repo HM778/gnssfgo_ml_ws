@@ -35,6 +35,7 @@
 
 #include <stdarg.h>
 #include <gnss_comm/gnss_spp.hpp>
+#include <gnss_comm/gnss_spp_extra.hpp>
 #include <gnss_comm/gnss_utility.hpp>
 #include <gnss_comm/gnss_constant.hpp>
 
