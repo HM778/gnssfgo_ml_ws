@@ -118,6 +118,43 @@ public:
     std::array<double, state_size> marginalization_prior_mean_{};
     Eigen::Matrix<double, state_size, state_size> marginalization_prior_sqrt_info_ = Eigen::Matrix<double, state_size, state_size>::Identity();
 
+    // ===== OSQA Transformer 质量评分存储 =====
+    // key: satellite PRN (integer), value: quality score [0, 1]
+    // 1.0 = fully trusted, 0.0 = completely unreliable
+    // 由外部 OSQA Transformer 程序通过文件交换提供
+#ifdef ENABLE_TRANSFORMER_BRIDGE
+    std::map<int, double> osqa_quality_scores_;
+    double osqa_quality_threshold_ = 0.3;  // 低于此分数的卫星被跳过低质量阈值
+
+public:
+    void setQualityScores(const std::map<int, double> &scores)
+    {
+        osqa_quality_scores_ = scores;
+    }
+
+    double getQualityScore(int sat_id) const
+    {
+        auto it = osqa_quality_scores_.find(sat_id);
+        return (it != osqa_quality_scores_.end()) ? it->second : 1.0;  // 无数据时默认完全信任
+    }
+
+    void clearQualityScores()
+    {
+        osqa_quality_scores_.clear();
+    }
+
+    bool hasQualityScores() const
+    {
+        return !osqa_quality_scores_.empty();
+    }
+#else
+    // Stub implementations when bridge is disabled
+    void setQualityScores(const std::map<int, double> &) {}
+    double getQualityScore(int) const { return 1.0; }
+    void clearQualityScores() {}
+    bool hasQualityScores() const { return false; }
+#endif
+
 protected:
     ceres::Problem::Options problem_options;
 
@@ -687,7 +724,7 @@ public:
     {
         /* process doppler measurements */
         std::map<double, nav_msgs::Odometry>::iterator iterdopp, iterdoppNext;
-        
+
         const double kMaxCov = 300.0;
         const double kMinConfidence = 0.5;
 
@@ -698,6 +735,24 @@ public:
             const double normalized = cov_diag / kMaxCov;
             return std::max(kMinConfidence, std::min(1.0, normalized));
         };
+
+        // OSQA Transformer 质量评分集成: 计算指定 epoch 所有卫星的平均质量评分
+#ifdef ENABLE_TRANSFORMER_BRIDGE
+        auto computeEpochAvgQuality = [this](double time_frame) -> double {
+            auto gnss_it = gnss_raw_map.find(time_frame);
+            if (gnss_it == gnss_raw_map.end()) return 1.0;
+            double sum_q = 0.0;
+            int count = 0;
+            for (const auto &obs : gnss_it->second)
+            {
+                if (!obs) continue;
+                sum_q += getQualityScore(static_cast<int>(obs->sat));
+                ++count;
+            }
+            return (count > 0) ? (sum_q / count) : 1.0;
+        };
+#endif
+
         int added_doppler_factor_count = 0;
         int i = 0;
         for(iterdopp = doppler_map.begin(); iterdopp != doppler_map.end()&& (i + 1) < measSize;iterdopp++, i++)
@@ -723,9 +778,19 @@ public:
                 double var_x = confidence_from_cov(iterdopp->second.twist.covariance[0]);
                 double var_y = confidence_from_cov(iterdopp->second.twist.covariance[1]);
                 double var_z = confidence_from_cov(iterdopp->second.twist.covariance[2]);
+
+                // OSQA Transformer 质量评分集成: 多普勒因子权重按 epoch 平均卫星质量缩放
+                // 低质量卫星多 → avg_quality 低 → var 增大 → 多普勒约束减弱
+#ifdef ENABLE_TRANSFORMER_BRIDGE
+                double avg_quality = computeEpochAvgQuality(iterdopp->first);
+                double quality_scale = 1.0 / std::max(avg_quality, 0.1);  // 限制最大放大倍数为10
+                var_x *= quality_scale;
+                var_y *= quality_scale;
+                var_z *= quality_scale;
+#endif
                 Eigen::Vector3d var_vec(var_x,var_y,var_z);
-                ceres::CostFunction* doppler_function = new ceres::AutoDiffCostFunction<dopplerFactor, 3 
-                                                        , state_size,state_size>(new 
+                ceres::CostFunction* doppler_function = new ceres::AutoDiffCostFunction<dopplerFactor, 3
+                                                        , state_size,state_size>(new
                                                         dopplerFactor(v_x_i, v_y_i, v_z_i, delta_t, var_vec));
                 problem.AddResidualBlock(doppler_function, loss_function, state_array[i],state_array[i+1]);
                 ++added_doppler_factor_count;
@@ -747,7 +812,7 @@ public:
         auto iter_pr = gnss_raw_map.begin();
         auto iter_ephem = ephems_map.begin();
         int added_pseudorange_factor_count = 0;
-        int if_psr_count = 0;
+
         for (int epoch_idx = 0; epoch_idx < length && iter_pr != gnss_raw_map.end(); ++epoch_idx, ++iter_pr)
         {
             const double epoch_time = iter_pr->first;
@@ -788,6 +853,18 @@ public:
                     continue;
                 }
 
+                // OSQA Transformer 质量评分集成: 根据卫星可靠性调整伪距因子权重
+                double effective_sigma = measurement.sigma;
+#ifdef ENABLE_TRANSFORMER_BRIDGE
+                double quality = getQualityScore(measurement.sat);
+                // 低质量卫星: 增大 sigma → 降低置信度，极端低质量直接跳过
+                if (quality < osqa_quality_threshold_ * 0.3)
+                {
+                    continue;  // 完全不可信，跳过
+                }
+                effective_sigma = measurement.sigma / std::max(quality, 0.01);
+#endif
+
                 ceres::CostFunction* ps_function = new ceres::AutoDiffCostFunction<pseudorangeFactor, 1
                                                                 , state_size>(new pseudorangeFactor(
                                                                     measurement.sat_sys,
@@ -795,7 +872,7 @@ public:
                                                                     measurement.sat_pos.y(),
                                                                     measurement.sat_pos.z(),
                                                                     measurement.pseudorange,
-                                                                    measurement.sigma,
+                                                                    effective_sigma,
                                                                     measurement.sv_dt_sec,
                                                                     measurement.tgd_sec,
                                                                     measurement.ion_delay_m,
@@ -805,8 +882,7 @@ public:
                 ++added_pseudorange_factor_count;
             }
         }
-        printf("[  PSR   FACTOR] Added %d (L1=%d IF=%d).\n", added_pseudorange_factor_count,
-                 added_pseudorange_factor_count - if_psr_count, if_psr_count);
+        printf("[  PSR   FACTOR] Added %d .\n", added_pseudorange_factor_count);
         last_added_psr_factor_count = added_pseudorange_factor_count;
         return true;
     }

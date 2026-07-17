@@ -25,16 +25,9 @@ using namespace Eigen;
 
 #define use_fixed_cov_ar 1
 namespace gnss_comm_extra{
-
-    // Eigen::Matrix<double, 7, 1> psr_pos_extra(const std::vector<ObsPtr> &obs, 
-    //     const std::vector<EphemBasePtr> &ephems, const std::vector<GloEphemPtr> &gephems, const std::vector<double> &iono_params)
-    // {
-        
-    // }
-
-
     struct CorrectedPseudorangeMeasurement
     {
+        int freq = -1;
         int sat = 0;
         std::string sat_sys;
         Eigen::Vector3d sat_pos = Eigen::Vector3d::Zero();
@@ -80,14 +73,27 @@ namespace gnss_comm_extra{
     inline double computePseudorangeWeight(const gnss_comm::ObsPtr &obs,
                                            const gnss_comm::EphemBasePtr &ephem_base,
                                            double /*elevation_rad*/,
-                                           int l1_idx)
+                                           int freq)
     {
         double weight = 1.0;
-        if (obs && l1_idx >= 0 && l1_idx < static_cast<int>(obs->psr_std.size()) && obs->psr_std[l1_idx] > 0.0)
+        if(freq == 1)
         {
-            weight /= (obs->psr_std[l1_idx] / 0.16);
+            int l1_idx;
+            gnss_comm::L1_freq(obs,&l1_idx);
+            if (obs && l1_idx >= 0 && l1_idx < static_cast<int>(obs->psr_std.size()) && obs->psr_std[l1_idx] > 0.0)
+            {
+                weight /= (obs->psr_std[l1_idx] / 0.16);
+            }
         }
-
+        else if(freq == 2)
+        {
+            int l2_idx;
+            gnss_comm::L2_freq(obs,&l2_idx);
+            if (obs && l2_idx >= 0 && l2_idx < static_cast<int>(obs->psr_std.size()) && obs->psr_std[l2_idx] > 0.0)
+            {
+                weight /= (obs->psr_std[l2_idx] / 0.16);
+            }
+        }
         const int obs_sys = obs ? gnss_comm::satsys(obs->sat, NULL) : SYS_NONE;
         if (gnss_comm::EphemPtr ephem = std::dynamic_pointer_cast<gnss_comm::Ephem>(ephem_base))
         {
@@ -142,7 +148,10 @@ namespace gnss_comm_extra{
         // klobuchar model for ionospheric delay, 
         gnss_comm::psr_res_extra(receiver_state, matched_obs, sat_states, iono_params, residuals, jacobian, atmos_delay, all_sv_azel);
 
-        corrected_measurements.reserve(matched_obs.size());
+        // 预留 L1/L2 频段
+        corrected_measurements.reserve( 2* matched_obs.size());
+
+        // 遍历同时具有观测和星历的卫星观测
         for (size_t i = 0; i < matched_obs.size(); ++i)
         {
             CorrectedPseudorangeMeasurement measurement;
@@ -150,73 +159,86 @@ namespace gnss_comm_extra{
             const auto &sat_state = sat_states[i];
             if (!single_obs || !sat_state)
             {
-                corrected_measurements.push_back(measurement);
                 continue;
             }
 
-            int freq_idx = -1;
+            // 双频段观测可用性检查
+            int freq_idx_l1 = -1,freq_idx_l2=-1;
+            bool valid_l1 = true, valid_l2 = true;
             
-            if (freq_idx < 0 || freq_idx >= static_cast<int>(single_obs->psr.size()) || single_obs->psr[freq_idx] <= 0.0)
+            gnss_comm::L1_freq(single_obs,&freq_idx_l1);
+            gnss_comm::L2_freq(single_obs,&freq_idx_l2);
+            
+            if (freq_idx_l1 < 0 || freq_idx_l1 >= static_cast<int>(single_obs->psr.size()) || single_obs->psr[freq_idx_l1] <= 0.0)
             {
-                corrected_measurements.push_back(measurement);
+                valid_l1 = false;
+            }
+            if (freq_idx_l2 < 0 || freq_idx_l2 >= static_cast<int>(single_obs->psr.size()) || single_obs->psr[freq_idx_l2] <= 0.0)
+            {
+                valid_l2 = false;
+            }
+            if( !valid_l2 && !valid_l1)
+            {
                 continue;
             }
 
             if (!std::isfinite(sat_state->pos.x()) || !std::isfinite(sat_state->pos.y()) || !std::isfinite(sat_state->pos.z()))
             {
-                corrected_measurements.push_back(measurement);
                 continue;
             }
 
-            const double elevation_rad = (i < all_sv_azel.size()) ? all_sv_azel[i](1) : M_PI / 2.0;
-            const double weight = computePseudorangeWeight(single_obs, matched_ephems[i], elevation_rad, freq_idx);
-            if (weight <= 0.0)
+            for( int i = 0;i<2; i++)
             {
-                continue;
-            }
+                int freq_idx = -1;
+                if(i == 0 && valid_l1)
+                {
+                    freq_idx = freq_idx_l1;
+                    measurement.freq = 1;
+                }
+                else if( i == 1 && valid_l2)
+                {
+                    freq_idx = freq_idx_l2;
+                    measurement.freq = 2;
+                }
+                
+                const double elevation_rad = (i < all_sv_azel.size()) ? all_sv_azel[i](1) : M_PI / 2.0;
+                const double weight = computePseudorangeWeight(single_obs, matched_ephems[i], elevation_rad, freq_idx);
+                if (weight <= 0.0)
+                {
+                    continue;
+                }
 
-            const int obs_sys = gnss_comm::satsys(single_obs->sat, NULL);
-            measurement.sat = static_cast<int>(single_obs->sat);
-            measurement.sat_sys = (obs_sys == SYS_GPS) ? "GPS" :
-                                  ((obs_sys == SYS_GLO) ? "GLONASS" :
-                                  ((obs_sys == SYS_GAL) ? "Galileo" :
-                                  ((obs_sys == SYS_BDS) ? "BeiDou" : "Unknown")));
-            measurement.sat_pos = sat_state->pos;
-            measurement.pseudorange = single_obs->psr[freq_idx];
-            measurement.sigma = std::sqrt(1.0 / weight);
-            measurement.sv_dt_sec = sat_state->dt;
-            measurement.tgd_sec = sat_state->tgd;
-            measurement.ion_delay_m = (i < atmos_delay.size()) ? atmos_delay[i](0) : 0.0;
-            measurement.tro_delay_m = (i < atmos_delay.size()) ? atmos_delay[i](1) : 0.0;
-            measurement.elevation_rad = elevation_rad;
-            measurement.valid = true;
-            measurement.psr_std = single_obs->psr_std[freq_idx] <= 0.0 ? 3.0 : single_obs->psr_std[freq_idx];
-            corrected_measurements.push_back(measurement);
+                const int obs_sys = gnss_comm::satsys(single_obs->sat, NULL);
+                measurement.sat = static_cast<int>(single_obs->sat);
+                measurement.sat_sys = (obs_sys == SYS_GPS) ? "GPS" :
+                                    ((obs_sys == SYS_GLO) ? "GLONASS" :
+                                    ((obs_sys == SYS_GAL) ? "Galileo" :
+                                    ((obs_sys == SYS_BDS) ? "BeiDou" : "Unknown")));
+                measurement.sat_pos = sat_state->pos;
+                measurement.pseudorange = single_obs->psr[freq_idx];
+                measurement.sigma = std::sqrt(1.0 / weight);
+                measurement.sv_dt_sec = sat_state->dt;
+                measurement.tgd_sec = sat_state->tgd;
+                measurement.ion_delay_m = (i < atmos_delay.size()) ? atmos_delay[i](0) : 0.0;
+                measurement.tro_delay_m = (i < atmos_delay.size()) ? atmos_delay[i](1) : 0.0;
+                measurement.elevation_rad = elevation_rad;
+                measurement.valid = true;
+                measurement.psr_std = single_obs->psr_std[freq_idx] <= 0.0 ? 3.0 : single_obs->psr_std[freq_idx];
+                corrected_measurements.push_back(measurement);
+            }
         }
 
         return corrected_measurements;
     }
 
 
-    double getDistanceFrom2Points(Eigen::Vector3d p1, Eigen::Vector3d p2)
+    double getDistance(Eigen::Vector3d p1, Eigen::Vector3d p2)
     {
         double xMod = pow((p1.x() - p2.x()), 2);
         double yMod = pow((p1.y() - p2.y()), 2);
         double zMod = pow((p1.z() - p2.z()), 2);
         double mod = sqrt(xMod + yMod + zMod);
         return mod;
-    }
-
-    /* get variance for carrier-phase from a single satellite based on elevation */
-    double getVarofCp(double ele)
-    {
-        double a = 0.01; 
-        double b = 0.01;
-        double c = 0;
-        double d = 0;
-        double square_sigma = pow(a,2) + pow(b,2) / pow(sin(ele * D2R), 2) + pow(c,2) + pow(d,2);
-        // return 0.004;
-        return square_sigma;
     }
 
     

@@ -54,11 +54,20 @@ add_compile_definitions(PROJECT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_executable(ground_truth_node src/ground_truth.cpp)
 
 # trbin trrtk
+# ===== OSQA Transformer 质量评估集成 =====
+# cmake 选项：是否启用与 GNSS-Transformer (OSQA) 的文件数据交换
+# 启用: catkin build gnssfgo -DENABLE_TRANSFORMER_BRIDGE=ON  (默认)
+# 禁用: catkin build gnssfgo -DENABLE_TRANSFORMER_BRIDGE=OFF
+option(ENABLE_TRANSFORMER_BRIDGE "Enable OSQA Transformer quality evaluation bridge" ON)
+
 add_executable(SANode src/SelfAdjustedNode.cpp)
 target_compile_definitions(SANode PRIVATE
   EIGEN_MALLOC_ALREADY_ALIGNED=0
   EIGEN_MAX_ALIGN_BYTES=16
 )
+if(ENABLE_TRANSFORMER_BRIDGE)
+  target_compile_definitions(SANode PRIVATE ENABLE_TRANSFORMER_BRIDGE)
+endif()
 if(ENABLE_ASAN)
   target_compile_options(SANode PRIVATE -fsanitize=address -fno-omit-frame-pointer -O1 -g)
   target_link_options(SANode PRIVATE -fsanitize=address)

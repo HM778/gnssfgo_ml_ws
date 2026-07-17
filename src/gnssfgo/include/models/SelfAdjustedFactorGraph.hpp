@@ -28,8 +28,6 @@
 #include "../tools/checking.hpp"
 
 #define state_size 7 // x,y,z, clk_gps, clk_glo, clk_gal, clk_bds
-#define ar_size 100
-#define residual_gate_threshold 0.1
 
 class SelfAdjustedFactorGraph: public FactorGraph{
     
@@ -142,60 +140,44 @@ public:
         auto gnss_data = curr_iter->second;
         for(const auto& obs : gnss_data)
         {
-            if(!obs) // 连续观测不足2个历元的卫星不考虑构建TR因子
+            if(!obs)
             {
                 continue;
             }
-            else
+
+            // 提前确定可用频段 (L1=1, L2=2), 避免后续循环覆盖
+            int l1_idx=-1, l2_idx=-1;
+            L1_freq(obs,&l1_idx);
+            L2_freq(obs,&l2_idx);
+            std::vector<int> freq_list;
+            if(l1_idx >= 0) freq_list.push_back(1);
+            if(l2_idx >= 0) freq_list.push_back(2);
+
+            auto ref_iter = curr_iter;
+            int i = 1;
+            while (i <= windowSize && ref_iter != gnss_raw_map.begin())
             {
-                auto ref_iter = curr_iter;
-                int i = 1;
-                while (i <= windowSize && ref_iter != gnss_raw_map.begin())
+                --ref_iter; // move to previous epoch; i means epoch-gap (>=1)
+
+                for(int freq_idx : freq_list)
                 {
-                    // ROS_INFO("FIND TR FACTOR: Satellite %d, Epoch Gap: %d", obs->sat, i);
-                    --ref_iter; // move to previous epoch; i means epoch-gap (>=1)
-                    //构建双差因子L1/L2：
-                    int freq_idx;
-                    for(int j=0;j<obs->freqs.size();j++)
-                    {
-                        int l1_idx=-1,l2_idx=-1;
-                        L1_freq(obs,&l1_idx);
-                        L2_freq(obs,&l2_idx);
-
-                        freq_idx = -1;
-                        
-                        // l1_idx/l2_idx 可能都是1
-                        if(l1_idx >= 0 && j == l1_idx)
-                        {
-                            // L1频段的双差因子构建
-                            freq_idx = 1;
-                        }
-
-                        else if(l2_idx >= 0 && j == l2_idx)
-                        {
-                            // L2频段的双差因子构建
-                            freq_idx = 2;
-                        }
-                    }
-                    TRDDMeasurement tr_meas;
-                    tr_meas.freq_idx = freq_idx;
-                    
-                    tr_meas.u_master_SV = obs;
-
-                    // 不满足观测连续性
-                    if( ((freq_idx == 1) && (sat_lock_count_l1[obs->sat] <= i)) || 
+                    // 不满足观测连续性 → 跳过当前频段, 继续尝试下一个频段或gap
+                    if( ((freq_idx == 1) && (sat_lock_count_l1[obs->sat] <= i)) ||
                         ((freq_idx == 2) && (sat_lock_count_l2[obs->sat] <= i)) )
                     {
-                        break;
+                        continue;
                     }
-                    
+
+                    TRDDMeasurement tr_meas;
+                    tr_meas.freq_idx = freq_idx;
+                    tr_meas.u_master_SV = obs;
+
                     // 在连续锁定的卫星中寻找副卫星
                     std::map<int,int> sat_lock_count;
                     if(freq_idx == 1) sat_lock_count = sat_lock_count_l1;
                     else if (freq_idx == 2) sat_lock_count = sat_lock_count_l2;
                     for(auto pair: sat_lock_count)
                     {
-                        // ROS_INFO("CHECKING :  Satellite %d lock count: %d", pair.first, pair.second);
                         if(pair.first == obs->sat)
                         {
                             continue; // 跳过主卫星
@@ -203,15 +185,11 @@ public:
 
                         if (satsys(pair.first, nullptr) != satsys(obs->sat, nullptr))
                         {
-                            continue; // 仅在同一星座/系统内构建TR双差，避免系统间钟差引入偏置 TODO:加入卫星枢纽，取消系统限制
+                            continue; // 仅在同一星座/系统内构建TR双差
                         }
 
-                        if(pair.second > (i + 1)) // 连续观测至少i+1个历元（含当前），增加TR因子稳定性
+                        if(pair.second > (i + 1)) // 连续观测至少i+1个历元（含当前）
                         {
-                            // printf("selected: sat_id: %d,  lock_count: %d \n", pair.first, pair.second);
-                            // 找到一个**同频段**满足条件的副卫星，构建TR因子
-
-                            //TODO: 此时的副卫星没有任何特征筛选机制，
                             findSatellitewithSameId(pair.first, gnss_data, tr_meas.u_iSV, tr_meas.freq_idx);
                             findSatellitewithSameId(pair.first, ref_iter->second, tr_meas.r_iSV,tr_meas.freq_idx);
 
@@ -227,7 +205,6 @@ public:
                                 tr_meas.curr_epoch_index < 0 || tr_meas.curr_epoch_index >= measSize ||
                                 tr_meas.prev_epoch_index == tr_meas.curr_epoch_index)
                             {
-                                // ROS_INFO("skip reason 1");
                                 continue;
                             }
 
@@ -239,11 +216,10 @@ public:
                                 !hasSatelliteInfo(reference_sv_info, tr_meas.r_master_SV) ||
                                 !hasSatelliteInfo(reference_sv_info, tr_meas.r_iSV))
                             {
-                                // ROS_INFO("skip reason 2");
                                 continue;
                             }
 
-                            // 将预测的移动距离关联到TR测量中，后续时间折扣函数使用
+                            // 将预测的移动距离关联到TR测量中
                             Eigen::Vector3d prev_pos(state_array[tr_meas.prev_epoch_index][0], state_array[tr_meas.prev_epoch_index][1], state_array[tr_meas.prev_epoch_index][2]);
                             Eigen::Vector3d pred_pos(state_array[tr_meas.curr_epoch_index-1][0], state_array[tr_meas.curr_epoch_index-1][1], state_array[tr_meas.curr_epoch_index-1][2]);
                             Eigen::Vector3d dop_vel ;
@@ -252,51 +228,48 @@ public:
                             dop_vel.z() = doppler_map[tr_meas.curr_time].twist.twist.linear.z;
                             pred_pos = pred_pos + dop_vel*((time_frame_now - time_frame_last)/10.0);
                             double pred_move = (pred_pos - prev_pos).norm();
-                            tr_meas.pred_move = pred_move; 
+                            tr_meas.pred_move = pred_move;
 
                             if(checkRedundantPair(tr_meas))
                             {
-                                // ROS_INFO("skip reason 3");
-                                continue; // 已存在相同卫星组合的TR因子，跳过以避免冗余
+                                continue; // 已存在相同卫星组合的TR因子
                             }
 
-                            // 因子权重自适应调整（TODO）
+                            // 因子权重自适应调整
                             double time_discount = 1.0;
                             double p_rel = 1.0;
                             if(!SAME_RELIABLE)
                             {
                                 p_rel = 1.0;
                             }
-                            
+
                             if(!SAME_TIME_WEIGHT)
                             {
                                 time_discount = 1.0;
-                            } 
+                            }
 
-                            tr_meas.tr_score = pow(p_rel,1.0/6.0) * time_discount ; // 综合可靠性得分，作为TR因子的权重依据
-                            tr_measurments.push_back(tr_meas);   //添加到候选双差因子列表
+                            // OSQA Transformer 质量评分集成
+                            double quality_score = 1.0;
+#ifdef ENABLE_TRANSFORMER_BRIDGE
+                            quality_score = getQualityScore(obs->sat);
+#endif
 
+                            tr_meas.tr_score = pow(p_rel,1.0/6.0) * time_discount * quality_score;
+                            tr_measurments.push_back(tr_meas);
 
                             TRFactorCount++;
-                            // 达到数量上限，退出
                             if(TRFactorCount >= MaxTRFactorNum)
                             {
-                                break; 
+                                break;
                             }
-                            
                         }
                     }
-                    ++i;
-                    if(TRFactorCount >= MaxTRFactorNum)
-                    {
-                        break; 
-                    }
+                    if(TRFactorCount >= MaxTRFactorNum) break;
                 }
+                ++i;
+                if(TRFactorCount >= MaxTRFactorNum) break;
             }
-            if(TRFactorCount >= MaxTRFactorNum)
-            {
-               break;
-            }
+            if(TRFactorCount >= MaxTRFactorNum) break;
         }
 
         for(int i =0; i<tr_measurments.size(); i++)
@@ -306,12 +279,22 @@ public:
             auto current_sv_info = sv_info_window_map[tr_measurments[i].curr_time];
             int prev_epoch_index = tr_measurments[i].prev_epoch_index;
             int epoch_index = tr_measurments[i].curr_epoch_index;
-            
+
+            // OSQA Transformer 质量评分集成: DD 因子质量取两颗卫星的几何平均
+            double dd_pr_conf = 1.0;
+#ifdef ENABLE_TRANSFORMER_BRIDGE
+            if (tr_measurments[i].u_master_SV && tr_measurments[i].u_iSV)
+            {
+                double q_master = getQualityScore(static_cast<int>(tr_measurments[i].u_master_SV->sat));
+                double q_iSV = getQualityScore(static_cast<int>(tr_measurments[i].u_iSV->sat));
+                dd_pr_conf = std::sqrt(std::max(q_master, 0.01) * std::max(q_iSV, 0.01));
+            }
+#endif
 
             ceres::CostFunction* dd_pr_function =
             new ceres::AutoDiffCostFunction<DDPseudorangeFactor, 1, state_size, state_size>(
-                new DDPseudorangeFactor(tr_measurments[i], current_sv_info, reference_sv_info, 1.0, tr_measurments[i].freq_idx));
-            
+                new DDPseudorangeFactor(tr_measurments[i], current_sv_info, reference_sv_info, dd_pr_conf, tr_measurments[i].freq_idx));
+
             problem.AddResidualBlock(dd_pr_function, loss_function, state_array[prev_epoch_index], state_array[epoch_index]);
             
             
@@ -416,11 +399,13 @@ public:
                 L2_freq(iter->second[i],&l2_idx);
                 if(l1_idx >= 0)
                 {
-                    cycleSlipDetect(sat_id, 1);
+                    if(!cycleSlipDetect(sat_id, 1))
+                        sat_lock_count_l1[sat_id]++;
                 }
                 if(l2_idx >= 0)
                 {
-                    cycleSlipDetect(sat_id, 2);
+                    if(!cycleSlipDetect(sat_id, 2))
+                        sat_lock_count_l2[sat_id]++;
                 }
                 if(l1_idx < 0 && l2_idx < 0)
                 {

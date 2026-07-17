@@ -2,6 +2,7 @@
 
 #include "../include/models/SelfAdjustedFactorGraph.hpp"
 #include "../include/tools/tic_toc.h"
+#include "../include/tools/transformer_bridge.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -23,10 +24,17 @@ class SelfAdjustedTR : public ProcessingNodeExtra
     bool SAME_RELIABLE,SAME_TIME_WEIGHT;
     double last_output_time_sec = -1.0;
 
-    std::mutex m_factor_graph_mux;
-    std::atomic<bool> history_worker_running{false};
-    std::atomic<bool> history_update_pending{false};
+    // ===== OSQA Transformer 质量评估桥接 =====
+#ifdef ENABLE_TRANSFORMER_BRIDGE
+    bool osqa_enabled = false;
+    std::string osqa_input_path;
+    std::string osqa_output_path;
+    double osqa_quality_threshold = 0.3;
+    int osqa_epoch_counter = 0;
+    double last_osqa_export_time_frame = -1.0;
+#endif
 
+    std::mutex m_factor_graph_mux;
     
 private:
     SelfAdjustedFactorGraph factor_graph;
@@ -46,6 +54,25 @@ public:
         nh.param<bool>("same_reliable", SAME_RELIABLE, false);
         
         ROS_ERROR("Set time_dicount/reliable method: %d / %d", SAME_TIME_WEIGHT,SAME_RELIABLE);
+
+        // ===== OSQA Transformer 质量评估桥接配置 =====
+#ifdef ENABLE_TRANSFORMER_BRIDGE
+        nh.param<bool>("osqa_enabled", osqa_enabled, false);
+        if (osqa_enabled)
+        {
+            nh.param<std::string>("osqa_input_path", osqa_input_path,
+                ros::package::getPath("gnssfgo") + "/../osqa_input.jsonl");
+            nh.param<std::string>("osqa_output_path", osqa_output_path,
+                ros::package::getPath("gnssfgo") + "/../osqa_output.jsonl");
+            nh.param<double>("osqa_quality_threshold", osqa_quality_threshold, 0.3);
+            ROS_INFO("[OSQA Bridge] Enabled. Input: %s, Output: %s, Threshold: %.2f",
+                     osqa_input_path.c_str(), osqa_output_path.c_str(), osqa_quality_threshold);
+        }
+        else
+        {
+            ROS_INFO("[OSQA Bridge] Disabled. Running without transformer quality evaluation.");
+        }
+#endif
         factor_graph.windowSize = windowSize;
         factor_graph.MARGINAL_ENABLE = marginal_enable;
         factor_graph.SAME_RELIABLE = SAME_RELIABLE;
@@ -112,7 +139,28 @@ public:
                         // Rebuild the factor graph every iteration to avoid stale residual blocks
                         // constraining reused state memory after the sliding window moves.
                         factor_graph.resetProblem();
-                        
+
+                        // ===== OSQA Transformer 质量评分导入 =====
+                        // 在构建因子图之前，读取 OSQA 对之前 epoch 的卫星信号质量评估结果
+                        // 质量评分将用于调整伪距因子和 TR 双差因子的权重
+#ifdef ENABLE_TRANSFORMER_BRIDGE
+                        if (osqa_enabled)
+                        {
+                            std::map<int, transformer_bridge::SatQualityInfo> quality_scores =
+                                transformer_bridge::readLatestQualityScores(osqa_output_path);
+                            if (!quality_scores.empty())
+                            {
+                                std::map<int, double> simple_scores;
+                                for (const auto &kv : quality_scores)
+                                {
+                                    simple_scores[kv.first] = kv.second.quality;
+                                }
+                                factor_graph.setQualityScores(simple_scores);
+                                factor_graph.osqa_quality_threshold_ = osqa_quality_threshold;
+                            }
+                        }
+#endif
+
                         if(factor_graph.first_run)
                         {
                             //为待估计的位置分配内存，保存窗口内估计状态
@@ -148,6 +196,16 @@ public:
                         ceres::Solve(local_options, &factor_graph.problem, &factor_graph.summary);
                         // factor_graph.solveFloatAmbiguity();
                         factor_graph.saveGraphStateToVector(true);
+
+                        // ===== OSQA Transformer 数据导出 =====
+                        // 在优化完成后，将所有预处理数据和因子残差导出到 JSONL 文件
+                        // 供外部 OSQA Transformer 程序读取和评估卫星信号质量
+#ifdef ENABLE_TRANSFORMER_BRIDGE
+                        if (osqa_enabled)
+                        {
+                            exportEpochToOSQA(factor_graph);
+                        }
+#endif
 
                         if (factor_graph.getCovarianceMatrixOfLatestEpoch())
                         {
@@ -414,6 +472,136 @@ public:
 
         hasNewData.store(false, std::memory_order_release);
     }
+
+#ifdef ENABLE_TRANSFORMER_BRIDGE
+    // ===== OSQA Transformer 数据导出 =====
+    // 导出优化后的后验残差, 而非原始伪距减几何距离。
+    // 使用与 addPsrFactors() 完全相同的校正量:
+    //   est = geo_range + sagnac − sat_clock + TGD + iono + tropo + rx_clock_opt
+    //   post_fit_residual = est − raw_psr   (单位: 米)
+    void exportEpochToOSQA(SelfAdjustedFactorGraph &fg)
+    {
+        osqa_epoch_counter++;
+
+        double time_frame = fg.time_frame_now;
+        double gpst_sec = time_frame / 10.0;
+
+        if (std::abs(time_frame - last_osqa_export_time_frame) < 5e-2)
+        {
+            return;
+        }
+        last_osqa_export_time_frame = time_frame;
+
+        int latest_idx = fg.measSize - 1;
+        if (latest_idx < 0 || latest_idx >= static_cast<int>(fg.state_array.size()))
+        {
+            return;
+        }
+
+        // ---- 优化后的接收机状态 ----
+        const double rx_x = fg.state_array[latest_idx][0];
+        const double rx_y = fg.state_array[latest_idx][1];
+        const double rx_z = fg.state_array[latest_idx][2];
+        const double clk_gps = fg.state_array[latest_idx][3];
+        const double clk_glo = fg.state_array[latest_idx][4];
+        const double clk_gal = fg.state_array[latest_idx][5];
+        const double clk_bds = fg.state_array[latest_idx][6];
+        Eigen::Vector3d receiver_ecef(rx_x, rx_y, rx_z);
+        Eigen::Vector3d receiver_enu(0, 0, 0);
+        {
+            std::lock_guard<std::mutex> lk(m_gnss_raw_mux);
+            receiver_enu = latest_pos_enu;
+        }
+
+        // ---- 最新 epoch 数据 ----
+        auto raw_iter = fg.gnss_raw_map.rbegin();
+        if (raw_iter == fg.gnss_raw_map.rend()) return;
+        const auto &observations = raw_iter->second;
+        double epoch_time = raw_iter->first;
+
+        // ---- 获取星历 ----
+        std::vector<gnss_comm::EphemBasePtr> epoch_ephems;
+        {
+            auto eph_it = fg.ephems_map.find(epoch_time);
+            if (eph_it != fg.ephems_map.end()) epoch_ephems = eph_it->second;
+        }
+
+        // ---- 卫星信息 ----
+        std::map<int, sv_info> epoch_sv_info;
+        auto sv_iter = fg.sv_info_window_map.find(epoch_time);
+        if (sv_iter != fg.sv_info_window_map.end()) epoch_sv_info = sv_iter->second;
+
+        // ---- 用优化后状态调用 buildCorrectedPseudorangeMeasurements ----
+        // 获取与 addPsrFactors 完全相同的校正量 (sat_clock, TGD, iono, tropo)
+        std::vector<double> iono_params(8, 0.0);
+        std::vector<gnss_comm_extra::CorrectedPseudorangeMeasurement> corrected =
+            gnss_comm_extra::buildCorrectedPseudorangeMeasurements(
+                observations, epoch_ephems, receiver_ecef, true, iono_params);
+
+        // ---- 计算后验残差 ----
+        std::map<int, double> psr_residual_map;
+        for (const auto &m : corrected)
+        {
+            if (!m.valid || m.sat_sys == "Unknown") continue;
+
+            int sat = m.sat;
+            double geo_range = (receiver_ecef - m.sat_pos).norm();
+            double sagnac = OMGE_ / CLIGHT_ * (m.sat_pos.x() * rx_y - m.sat_pos.y() * rx_x);
+            double sv_clk_m = m.sv_dt_sec * CLIGHT_;
+            double tgd_m = m.tgd_sec * CLIGHT_;
+            double iono_m = m.ion_delay_m;
+            double tropo_m = m.tro_delay_m;
+
+            // 接收机钟差 (米) — 与 pseudorangeFactor 中的 state[3..6] 对应
+            double rx_clk = 0.0;
+            if (m.sat_sys == "GPS")      rx_clk = clk_gps;
+            else if (m.sat_sys == "GLONASS") rx_clk = clk_glo;
+            else if (m.sat_sys == "Galileo")  rx_clk = clk_gal;
+            else if (m.sat_sys == "BeiDou")   rx_clk = clk_bds;
+
+            // est = geo + sagnac - sv_clk + tgd + iono + tropo + rx_clk
+            double est = geo_range + sagnac - sv_clk_m + tgd_m + iono_m + tropo_m + rx_clk;
+            double post_fit_residual = est - m.pseudorange;  // 米, 未加权
+
+            // Guard: 把钟差和大气延迟主导的粗差截断, 保留真实测量噪声尺度
+            if (std::isfinite(post_fit_residual) && std::abs(post_fit_residual) < 1e4)
+            {
+                psr_residual_map[sat] = post_fit_residual;
+            }
+        }
+
+        // ---- 因子残差 (占位, TR DD CP/PR 留待后续细化) ----
+        std::map<int, std::map<std::string, double>> factor_residuals;
+        for (const auto &obs : observations)
+        {
+            if (!obs) continue;
+            int sat = static_cast<int>(obs->sat);
+            std::map<std::string, double> res;
+            res["psr"] = 0.0;
+            res["tr_dd_pr"] = 0.0;
+            res["tr_dd_cp"] = 0.0;
+            factor_residuals[sat] = res;
+        }
+
+        bool ok = transformer_bridge::exportEpochData(
+            osqa_input_path, gpst_sec, time_frame,
+            receiver_ecef, receiver_enu, observations,
+            epoch_sv_info,
+            fg.sat_lock_count_l1, fg.sat_lock_count_l2,
+            psr_residual_map, factor_residuals);
+
+        if (ok)
+        {
+            ROS_DEBUG("[OSQA Bridge] Exported epoch %d (time_frame=%.1f, %zu satellites) to %s",
+                      osqa_epoch_counter, time_frame, observations.size(), osqa_input_path.c_str());
+        }
+        else
+        {
+            ROS_WARN("[OSQA Bridge] Failed to export epoch %d to %s",
+                     osqa_epoch_counter, osqa_input_path.c_str());
+        }
+    }
+#endif
 
 
     ~SelfAdjustedTR()

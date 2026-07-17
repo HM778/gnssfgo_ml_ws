@@ -1,7 +1,7 @@
 <launch>
     <arg name="binddcp_terminal_prefix" default="x-terminal-emulator -T binddcp -e" />
 
-    <node name="gnssfgo" pkg="gnssfgo" type="trbin_node" output="screen" launch-prefix="$(arg binddcp_terminal_prefix)">
+    <node name="SANode" pkg="gnssfgo" type="SANode" output="screen" launch-prefix="$(arg binddcp_terminal_prefix)">
         <param name="hotstart_enable" value="false" />
         <param name="GPS/BDS_only" value="false" />
         <param name="wls_llh_topic" value="/trbin/psr_llh" />
@@ -15,6 +15,10 @@
         <param name="max_running_time_ms" value="50.0" />
         <param name="same_time_weight" value="false" />
         <param name="same_reliable" value="false" />
+        <param name="osqa_enabled" value="true"/>
+        <param name="osqa_input_path" value="/home/nvidia/Work/gnssfgo_ml_ws/osqa_input.jsonl"/>
+        <param name="osqa_output_path" value="/home/nvidia/Work/gnssfgo_ml_ws/osqa_output.jsonl"/>
+        <param name="osqa_quality_threshold" value="0.3"/>
     </node>
 
 
