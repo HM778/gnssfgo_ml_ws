@@ -272,7 +272,7 @@ public:
                         if (!obs || obs->sat != sat_i) continue;
                         int l1_idx = -1, l2_idx = -1;
                         sv.freq_l1 = L1_freq(obs, &l1_idx);
-                        sv.lamda = (sv.freq_l1 > 0.0) ? LIGHT_SPEED / sv.freq_l1 : 0.0;
+                        sv.lamda_l1 = (sv.freq_l1 > 0.0) ? LIGHT_SPEED / sv.freq_l1 : 0.0;
                         sv.freq_l2 = L2_freq(obs, &l2_idx);
                         sv.lamda_l2 = (sv.freq_l2 > 0.0) ? LIGHT_SPEED / sv.freq_l2 : 0.0;
                         break;
@@ -317,7 +317,7 @@ public:
 
                     // GLONASS FDMA: frequencies depend on freqo channel number
                     sv.freq_l1 = FREQ1_GLO + gephem->freqo * DFRQ1_GLO;
-                    sv.lamda = LIGHT_SPEED / sv.freq_l1;
+                    sv.lamda_l1 = LIGHT_SPEED / sv.freq_l1;
                     sv.freq_l2 = FREQ2_GLO + gephem->freqo * DFRQ2_GLO;
                     sv.lamda_l2 = LIGHT_SPEED / sv.freq_l2;
 

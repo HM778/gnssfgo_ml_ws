@@ -342,8 +342,9 @@ public:
 
         if (can_psr)
         {
+            std::vector<double> iono_params(8, 0.0);
             const Eigen::Matrix<double, 7, 1> psr_result =
-                gnss_comm::psr_pos_extra(meas, local_ephem_array);
+                gnss_comm::psr_pos_extra(meas, local_ephem_array,iono_params);
             pos_ecef = psr_result.head<3>();
             if (pos_ecef.norm() > 1e-3)
             {

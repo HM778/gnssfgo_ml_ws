@@ -637,131 +637,6 @@ public:
         return add_tr_factor;
     }
 
-    /* setup ambiguity state size 
-     * this is slightly complicate, the ambiguity number is an variable
-     * 设置模糊度状态内存，模糊度数量根据当前窗口内的观测数据类型动态调整
-    */
-    bool setARStateMemoryAndInitialize()
-    {
-        std::map<double, std::vector<gnss_comm::ObsPtr>>::iterator iter_sm; // station gnss measurements map iterator
-        int length = measSize;
-        gps_sec_array.resize(length);
-        iter_sm = station_gnss_raw_map.begin();
-        for(int k = 0;  k < length; k++,iter_sm++) // tranverse the whole station gnss measurements map
-        {
-            std::vector<gnss_comm::ObsPtr> st_gnss_data = (iter_sm->second);
-            int sv_cnt = st_gnss_data.size();
-            double t = iter_sm->first;
-            
-            /* find user end gnss data with closest time */
-            std::vector<gnss_comm::ObsPtr> closest_gnss_data;
-            findClosestEpoch(t, gnss_raw_map, closest_gnss_data);
-
-
-            gps_sec_array[k] = int((closest_gnss_data[0]->time.time + closest_gnss_data[0]->time.sec)*10);
-
-            /* get the dd measurements between
-            * 1. st_gnss_data from station
-            * 2. closest_gnss_data from user end
-            */
-
-            /* tranverse station gnss data at a epoch */
-            int carrier_phase_index = 0;
-            for(int q = 0; q < sv_cnt; q++)
-            {
-                double sat_id = st_gnss_data[q]->sat;
-                /*u_master_sv: user to master 
-                 *u_iSV: user to ith satellite
-                 *r_master_sv: reference to master satellite
-                */
-                gnss_comm::ObsPtr u_master_sv, u_iSV, r_master_sv;
-                
-                /* find the master satellite from the user end */
-                
-                if(findMasterSatellite(sat_id, closest_gnss_data, u_master_sv, u_iSV,sv_info_map))
-                {
-                    int sv_no = int(u_iSV->sat);
-                        auto sv_it = sv_info_map.find(sv_no);
-                        if (sv_it != sv_info_map.end() && sv_it->second.elevation == 0)
-                    {
-                    }
-                    /* find the satellite from station gnss with the same id with master satellite */
-                    findSatellitewithSameId(u_master_sv->sat, st_gnss_data, r_master_sv);
-
-                    DDMeasurement DD_measurement;
-                    DD_measurement.u_master_SV = u_master_sv;
-                    DD_measurement.u_iSV = u_iSV;
-
-                    DD_measurement.r_master_SV = r_master_sv;
-                    DD_measurement.r_iSV = st_gnss_data[q];
-                    Eigen::Vector3d base_pose(station_x, station_y, station_z);
-                    
-                    if(checkCarrierPhaseConsistency(DD_measurement)) 
-                    // (carrier_phase_index<10))
-                    { 
-                        carrier_phase_index++;
-                    }
-                    else
-                    {
-                        // LOG(INFO)<<"no carrier-phase measurement";
-                    }
-                }
-            }
-            ar_state_num[k][0] = carrier_phase_index;
-            
-        }
-
-        /* allocate memory to the ambiguity state */
-        ar_state_array.resize(length, nullptr);
-
-        for(int i = 0; i < length;i++)
-        {
-            /* ECEF_x, ECEF_y, ECEF_z */
-            ar_state_array[i] = new double[ar_state_num[i][0]]; //
-            for(int j = 0; j < ar_state_num[i][0]; j++)
-            {
-                ar_state_array[i][j] = 0;
-            }
-        }
-
-        return true;
-    }
-
-
-    /* setup const ambiguity state size 
-    *  已知模糊度数量的情况下，设置模糊度状态内存并初始化
-    */
-    bool setConstARStateMemoryAndInitialize()
-    {
-        /* allocate memory to the ambiguity state */
-        int length = measSize;
-
-        ar_state_array.resize(windowSize, nullptr);
-
-        for(int i = 0; i < windowSize;i++)
-        {
-            /* ECEF_x, ECEF_y, ECEF_z */
-            if (ar_state_array[i])
-            {
-                delete[] ar_state_array[i];
-                ar_state_array[i] = nullptr;
-            }
-
-            ar_state_array[i] = new double[ar_size];
-            for(int j = 0; j < ar_size; j++)
-            {
-                ar_state_array[i][j] = 0;
-            }
-
-            if (i < (int)ar_state_num.size() && ar_state_num[i])
-            {
-                ar_state_num[i][0] = 0;
-            }
-        }
-
-        return true;
-    }
-
     bool addMarginalizationPriorFactorForFirstState()
     {
         if (!has_marginalization_prior_ || measSize <= 0 || gnss_raw_map.empty())
@@ -1316,415 +1191,415 @@ public:
     }
 
     /* solve the ambiguity resolution */
-    bool solveAmbiguityResolutionFixedSolution()
-    {
-        /* construct the ambiguity resolution problem*/
-        int length = measSize;
-        /* get the Jacobian matrix for covariance propogation */
-        Eigen::MatrixXd jacobian_matrix; 
-        Eigen::MatrixXd weighting_matrix;
+    // bool solveAmbiguityResolutionFixedSolution()
+    // {
+    //     /* construct the ambiguity resolution problem*/
+    //     int length = measSize;
+    //     /* get the Jacobian matrix for covariance propogation */
+    //     Eigen::MatrixXd jacobian_matrix; 
+    //     Eigen::MatrixXd weighting_matrix;
 
-        /* number of ambiguity variables */
-        int AR_cnt = 0;
-        for(int i = 0; i < ar_size; i++)
-        {
-            if(fabs(ar_state_array[length-1][i])>0)
-            AR_cnt++;
-        }
-        ROS_INFO("AR_cnt-> %d", AR_cnt);
-        ROS_INFO("ar_state_num[k][0]-> %d", ar_state_num[length-1][0]);
-        AR_cnt = ar_state_num[length-1][0];
-        jacobian_matrix.resize(40, 3 + AR_cnt);
-        jacobian_matrix.setIdentity();
-        weighting_matrix.resize(40, 40);
-        weighting_matrix.setIdentity();
+    //     /* number of ambiguity variables */
+    //     int AR_cnt = 0;
+    //     for(int i = 0; i < ar_size; i++)
+    //     {
+    //         if(fabs(ar_state_array[length-1][i])>0)
+    //         AR_cnt++;
+    //     }
+    //     ROS_INFO("AR_cnt-> %d", AR_cnt);
+    //     ROS_INFO("ar_state_num[k][0]-> %d", ar_state_num[length-1][0]);
+    //     AR_cnt = ar_state_num[length-1][0];
+    //     jacobian_matrix.resize(40, 3 + AR_cnt);
+    //     jacobian_matrix.setIdentity();
+    //     weighting_matrix.resize(40, 40);
+    //     weighting_matrix.setIdentity();
 
-        std::map<double, std::vector<gnss_comm::ObsPtr>>::iterator iter_cov; // station gnss measurements map iterator
-        iter_cov = station_gnss_raw_map.end();
-        iter_cov--;
+    //     std::map<double, std::vector<gnss_comm::ObsPtr>>::iterator iter_cov; // station gnss measurements map iterator
+    //     iter_cov = station_gnss_raw_map.end();
+    //     iter_cov--;
 
-        std::vector<gnss_comm::ObsPtr> st_gnss_data = (iter_cov->second);
-        int sv_cnt = st_gnss_data.size();
-        double t = iter_cov->first;
+    //     std::vector<gnss_comm::ObsPtr> st_gnss_data = (iter_cov->second);
+    //     int sv_cnt = st_gnss_data.size();
+    //     double t = iter_cov->first;
 
-        /* find user end gnss data with closest time */
-        std::vector<gnss_comm::ObsPtr> closest_gnss_data;
-        findClosestEpoch(t, gnss_raw_map, closest_gnss_data);
+    //     /* find user end gnss data with closest time */
+    //     std::vector<gnss_comm::ObsPtr> closest_gnss_data;
+    //     findClosestEpoch(t, gnss_raw_map, closest_gnss_data);
 
-        /* get the dd measurements between
-        * 1. st_gnss_data from station
-        * 2. closest_gnss_data from user end
-        */
+    //     /* get the dd measurements between
+    //     * 1. st_gnss_data from station
+    //     * 2. closest_gnss_data from user end
+    //     */
 
-        /* tranverse station gnss map */
-        int carrier_phase_index = 0;
-        int jac_row = 0;
-        Eigen::Vector3d u_pose(state_array[length-1][0], state_array[length-1][1], state_array[length-1][2]);
-        for(int q = 0; q < sv_cnt; q++)
-        {
-            double sat_id = st_gnss_data[q]->sat;
-            gnss_comm::ObsPtr u_master_sv, u_iSV, r_master_sv;
+    //     /* tranverse station gnss map */
+    //     int carrier_phase_index = 0;
+    //     int jac_row = 0;
+    //     Eigen::Vector3d u_pose(state_array[length-1][0], state_array[length-1][1], state_array[length-1][2]);
+    //     for(int q = 0; q < sv_cnt; q++)
+    //     {
+    //         double sat_id = st_gnss_data[q]->sat;
+    //         gnss_comm::ObsPtr u_master_sv, u_iSV, r_master_sv;
             
-            /* find the master satellite from the user end */
-            if(findMasterSatellite(sat_id, closest_gnss_data, u_master_sv, u_iSV,sv_info_map))
-            {
-                /* find the satellite from station gnss iwth the same id with master satellite */
-                findSatellitewithSameId(u_master_sv->sat, st_gnss_data, r_master_sv);
+    //         /* find the master satellite from the user end */
+    //         if(findMasterSatellite(sat_id, closest_gnss_data, u_master_sv, u_iSV,sv_info_map))
+    //         {
+    //             /* find the satellite from station gnss iwth the same id with master satellite */
+    //             findSatellitewithSameId(u_master_sv->sat, st_gnss_data, r_master_sv);
 
-                DDMeasurement DD_measurement;
-                DD_measurement.u_master_SV = u_master_sv;
-                DD_measurement.u_iSV = u_iSV;
+    //             DDMeasurement DD_measurement;
+    //             DD_measurement.u_master_SV = u_master_sv;
+    //             DD_measurement.u_iSV = u_iSV;
 
-                DD_measurement.r_master_SV = r_master_sv;
-                DD_measurement.r_iSV = st_gnss_data[q];
+    //             DD_measurement.r_master_SV = r_master_sv;
+    //             DD_measurement.r_iSV = st_gnss_data[q];
 
-                Eigen::Vector3d base_pose(station_x, station_y, station_z);
+    //             Eigen::Vector3d base_pose(station_x, station_y, station_z);
 
-                /* get the row for jocabian of pr DD*/
+    //             /* get the row for jocabian of pr DD*/
                 
 
-                gnss_comm_extra::getPrDDJacobian(sv_info_map, u_pose, base_pose, DD_measurement, jacobian_matrix,jac_row, weighting_matrix);
+    //             gnss_comm_extra::getPrDDJacobian(sv_info_map, u_pose, base_pose, DD_measurement, jacobian_matrix,jac_row, weighting_matrix);
                 
-                jac_row++;
-                if(checkCarrierPhaseConsistency(DD_measurement) && (carrier_phase_index<AR_cnt)) 
-                // (carrier_phase_index<10))
-                {
-                        /* get the row for jocabian of cp DD*/
-                        gnss_comm_extra::getCpDDJacobian(sv_info_map, u_pose, base_pose, DD_measurement, jacobian_matrix,jac_row, carrier_phase_index, weighting_matrix);
+    //             jac_row++;
+    //             if(checkCarrierPhaseConsistency(DD_measurement) && (carrier_phase_index<AR_cnt)) 
+    //             // (carrier_phase_index<10))
+    //             {
+    //                     /* get the row for jocabian of cp DD*/
+    //                     gnss_comm_extra::getCpDDJacobian(sv_info_map, u_pose, base_pose, DD_measurement, jacobian_matrix,jac_row, carrier_phase_index, weighting_matrix);
 
-                    carrier_phase_index++;
-                    // LOG(INFO)<<"add double-difference carrier phase factor";
-                    jac_row++;
-                }
-                else
-                {
-                    // LOG(INFO)<<"no carrier-phase measurement";
-                }
-            }
-        }
+    //                 carrier_phase_index++;
+    //                 // LOG(INFO)<<"add double-difference carrier phase factor";
+    //                 jac_row++;
+    //             }
+    //             else
+    //             {
+    //                 // LOG(INFO)<<"no carrier-phase measurement";
+    //             }
+    //         }
+    //     }
 
-        Eigen::MatrixXd jacobian_matrix_;
-        Eigen::MatrixXd weighting_matrix_;
-        weighting_matrix_.resize(jac_row,jac_row);
-        jacobian_matrix_.resize(jac_row, jacobian_matrix.cols());
-        for(int i = 0; i < jac_row; i++)
-            for(int j = 0; j < jacobian_matrix.cols(); j++)
-            {
-                jacobian_matrix_(i,j) = jacobian_matrix(i,j);
-            }
+    //     Eigen::MatrixXd jacobian_matrix_;
+    //     Eigen::MatrixXd weighting_matrix_;
+    //     weighting_matrix_.resize(jac_row,jac_row);
+    //     jacobian_matrix_.resize(jac_row, jacobian_matrix.cols());
+    //     for(int i = 0; i < jac_row; i++)
+    //         for(int j = 0; j < jacobian_matrix.cols(); j++)
+    //         {
+    //             jacobian_matrix_(i,j) = jacobian_matrix(i,j);
+    //         }
 
-        for(int i = 0; i <jac_row; i++)
-            for(int j = 0; j <jac_row; j++)
-            {
-                weighting_matrix_(i,j) = weighting_matrix(i,j);
-            }
+    //     for(int i = 0; i <jac_row; i++)
+    //         for(int j = 0; j <jac_row; j++)
+    //         {
+    //             weighting_matrix_(i,j) = weighting_matrix(i,j);
+    //         }
 
-        Eigen::MatrixXd jacobian_mat;
-        jacobian_mat = (jacobian_matrix_.transpose() * weighting_matrix_ *jacobian_matrix_).inverse();
-        // std::cout<<"jacobian_mat-> \n"<<std::setprecision(4)<<jacobian_mat<<std::endl;
-        // std::cout<<"weighting_matrix_-> \n"<<std::setprecision(4)<<weighting_matrix_<<std::endl;
-        Eigen::MatrixXd Qa, Qb; // Qa: covariance of phase bias
-        Qa.resize(AR_cnt, AR_cnt);
-        Qb.resize(3, 3);
-        for(int i = 3; i < AR_cnt+3; i++)
-            for(int j = 3; j < AR_cnt+3; j++)
-            {
-                Qa(i-3,j-3) = jacobian_mat(i,j);
-            }
-        for(int i = 0; i < 3; i++)
-            for(int j = 0; j < 3; j++)
-            {
-                Qb(i,j) = jacobian_mat(i,j);
-            }
-        // std::cout<<"Qa-> \n"<<std::setprecision(4)<<Qa<<std::endl;
+    //     Eigen::MatrixXd jacobian_mat;
+    //     jacobian_mat = (jacobian_matrix_.transpose() * weighting_matrix_ *jacobian_matrix_).inverse();
+    //     // std::cout<<"jacobian_mat-> \n"<<std::setprecision(4)<<jacobian_mat<<std::endl;
+    //     // std::cout<<"weighting_matrix_-> \n"<<std::setprecision(4)<<weighting_matrix_<<std::endl;
+    //     Eigen::MatrixXd Qa, Qb; // Qa: covariance of phase bias
+    //     Qa.resize(AR_cnt, AR_cnt);
+    //     Qb.resize(3, 3);
+    //     for(int i = 3; i < AR_cnt+3; i++)
+    //         for(int j = 3; j < AR_cnt+3; j++)
+    //         {
+    //             Qa(i-3,j-3) = jacobian_mat(i,j);
+    //         }
+    //     for(int i = 0; i < 3; i++)
+    //         for(int j = 0; j < 3; j++)
+    //         {
+    //             Qb(i,j) = jacobian_mat(i,j);
+    //         }
+    //     // std::cout<<"Qa-> \n"<<std::setprecision(4)<<Qa<<std::endl;
 
-        double *a;
-        double *Q;
-        double *F;
-        double S[2];
-        double n  = AR_cnt;
-        double m = 2;
-        F = new double[static_cast<size_t>(n) * 2];
-        size_t n_size = static_cast<size_t>(n);
-        size_t total = n_size * n_size;  // 两个 size_t 相乘
-        Q = new double[total];
-        a= new double[static_cast<size_t>(n) * 1];
+    //     double *a;
+    //     double *Q;
+    //     double *F;
+    //     double S[2];
+    //     double n  = AR_cnt;
+    //     double m = 2;
+    //     F = new double[static_cast<size_t>(n) * 2];
+    //     size_t n_size = static_cast<size_t>(n);
+    //     size_t total = n_size * n_size;  // 两个 size_t 相乘
+    //     Q = new double[total];
+    //     a= new double[static_cast<size_t>(n) * 1];
 
-        for(int i = 0; i < n; i++)
-        {
-            a[i] = ar_state_array[length-1][i];
-        }
-        std::vector<double> cov_vector;
-        // fi_cov_ar = fi_cov_ar.inverse();
-        for(int i = 0; i < n; i++) // cols
-            for(int j = 0; j < n; j++) // rows
-            {
-                cov_vector.push_back(Qa(j,i));
-                // LOG(INFO) << "Q[i+j]-> \n" << Q[i+j];
-                // if(i=i) 
-            }
+    //     for(int i = 0; i < n; i++)
+    //     {
+    //         a[i] = ar_state_array[length-1][i];
+    //     }
+    //     std::vector<double> cov_vector;
+    //     // fi_cov_ar = fi_cov_ar.inverse();
+    //     for(int i = 0; i < n; i++) // cols
+    //         for(int j = 0; j < n; j++) // rows
+    //         {
+    //             cov_vector.push_back(Qa(j,i));
+    //             // LOG(INFO) << "Q[i+j]-> \n" << Q[i+j];
+    //             // if(i=i) 
+    //         }
             
-        for(int i=0; i<cov_vector.size();i++)
-        {
-            Q[i] = cov_vector[i];
-        }
+    //     for(int i=0; i<cov_vector.size();i++)
+    //     {
+    //         Q[i] = cov_vector[i];
+    //     }
 
-        lambda(n, m, a, Q, F, S);
-        Eigen::MatrixXd Q_ba, Q_ab;
-        Q_ba.resize(3,AR_cnt);
-        Q_ab.resize(AR_cnt,3);
-        for(int i = 0; i < 3; i++) // rows
-            for(int j = 3; j < (3+ AR_cnt); j++) // cols
-            {
-                Q_ba(i,j-3) = jacobian_mat(i,j);
-                // LOG(INFO) << "Q[i+j]-> \n" << Q[i+j];
-                // if(i=i) 
-            }
-        for(int i = 3; i < (3 + AR_cnt); i++) // rows
-            for(int j = 0; j < 3; j++) // cols
-            {
-                Q_ab(i-3,j) = jacobian_mat(i,j);
-                // LOG(INFO) << "Q[i+j]-> \n" << Q[i+j];
-                // if(i=i) 
-            }
-        Eigen::MatrixXd integer_b, float_b;
-        integer_b.resize(AR_cnt, 1);
-        float_b.resize(AR_cnt, 1);
-        for(int i=0; i<AR_cnt; i++)
-        {
-            float_b(i) = ar_state_array[length-1][i];
-            integer_b(i) = F[i];
-        }
-        // std::cout<<"Q_ba-> \n"<<std::setprecision(4)<<Q_ba<<std::endl;
-        Eigen::Matrix<double, 3,1> a_state;
-        a_state<< state_array[length-1][0], state_array[length-1][1], state_array[length-1][2]; 
-        a_state = a_state + Q_ba * Qa.inverse() * (float_b - integer_b);
-        // a_state = a_state - Q_ab * Qb.inverse() * (float_b - integer_b);
+    //     lambda(n, m, a, Q, F, S);
+    //     Eigen::MatrixXd Q_ba, Q_ab;
+    //     Q_ba.resize(3,AR_cnt);
+    //     Q_ab.resize(AR_cnt,3);
+    //     for(int i = 0; i < 3; i++) // rows
+    //         for(int j = 3; j < (3+ AR_cnt); j++) // cols
+    //         {
+    //             Q_ba(i,j-3) = jacobian_mat(i,j);
+    //             // LOG(INFO) << "Q[i+j]-> \n" << Q[i+j];
+    //             // if(i=i) 
+    //         }
+    //     for(int i = 3; i < (3 + AR_cnt); i++) // rows
+    //         for(int j = 0; j < 3; j++) // cols
+    //         {
+    //             Q_ab(i-3,j) = jacobian_mat(i,j);
+    //             // LOG(INFO) << "Q[i+j]-> \n" << Q[i+j];
+    //             // if(i=i) 
+    //         }
+    //     Eigen::MatrixXd integer_b, float_b;
+    //     integer_b.resize(AR_cnt, 1);
+    //     float_b.resize(AR_cnt, 1);
+    //     for(int i=0; i<AR_cnt; i++)
+    //     {
+    //         float_b(i) = ar_state_array[length-1][i];
+    //         integer_b(i) = F[i];
+    //     }
+    //     // std::cout<<"Q_ba-> \n"<<std::setprecision(4)<<Q_ba<<std::endl;
+    //     Eigen::Matrix<double, 3,1> a_state;
+    //     a_state<< state_array[length-1][0], state_array[length-1][1], state_array[length-1][2]; 
+    //     a_state = a_state + Q_ba * Qa.inverse() * (float_b - integer_b);
+    //     // a_state = a_state - Q_ab * Qb.inverse() * (float_b - integer_b);
 
-        Eigen::Matrix<double ,3,1> ENU;
-        Eigen::Matrix<double, 3,1> state;
-        state<< state_array[length-1][0], state_array[length-1][1], state_array[length-1][2];
-        double fix_flag = 0;
-        if((S[1]/S[0])> 3)
-        {
-            state = a_state; // 
-            fix_flag = 1;
-            ROS_INFO("<<<<<Fixed!!!!!!!!!!!!!!!!!!!!!!!!!!>>>>>");
-            fixed_cnt++;
-        }
-        fixedStateGNSSRTK = state;
+    //     Eigen::Matrix<double ,3,1> ENU;
+    //     Eigen::Matrix<double, 3,1> state;
+    //     state<< state_array[length-1][0], state_array[length-1][1], state_array[length-1][2];
+    //     double fix_flag = 0;
+    //     if((S[1]/S[0])> 3)
+    //     {
+    //         state = a_state; // 
+    //         fix_flag = 1;
+    //         ROS_INFO("<<<<<Fixed!!!!!!!!!!!!!!!!!!!!!!!!!!>>>>>");
+    //         fixed_cnt++;
+    //     }
+    //     fixedStateGNSSRTK = state;
 
-        return true;
-    }
+    //     return true;
+    // }
 
     /* solve the ambiguity resolution */
     /* 求解整周模糊度*/
     /* solve the ambiguity resolution of current epoch  使用协方差传播（Covariance Propagation）的方式进行模糊度确定
     * 这种方法通常基于卡尔曼滤波或其他递推滤波方法，通过动态模型和观测模型逐步更新状态估计。
     * 该方法没有动态模型，而是通过数学推导将动态信息转化为先验因子 */
-    bool solveAmbiguityResolutionViaCovPropogation()
-    {
-        /* construct the ambiguity resolution problem*/
-        int length = measSize;
+    // bool solveAmbiguityResolutionViaCovPropogation()
+    // {
+    //     /* construct the ambiguity resolution problem*/
+    //     int length = measSize;
 
-        /* get the Jacobian matrix for covariance propogation */
-        /* 给定随机变量 x 及其协方差矩阵 Pₓₓ，以及函数 y = f(x)，协方差传播计算输出 y 的协方差矩阵 Pᵧᵧ。*/
-        Eigen::MatrixXd jacobian_matrix; 
-        Eigen::MatrixXd weighting_matrix;
+    //     /* get the Jacobian matrix for covariance propogation */
+    //     /* 给定随机变量 x 及其协方差矩阵 Pₓₓ，以及函数 y = f(x)，协方差传播计算输出 y 的协方差矩阵 Pᵧᵧ。*/
+    //     Eigen::MatrixXd jacobian_matrix; 
+    //     Eigen::MatrixXd weighting_matrix;
 
-        /* number of ambiguity variables */
-        int AR_cnt = 0;
-        AR_cnt = ar_state_num[length-1][0];
-        // LOG(INFO) << "AR_cnt-> " << AR_cnt;
-        // LOG(INFO) << "ar_state_num[k][0]-> "<< ar_state_num[length-1][0];
-        AR_cnt = ar_state_num[length-1][0];
-        jacobian_matrix.resize(40, 3 + AR_cnt);
-        jacobian_matrix.setIdentity();
-        weighting_matrix.resize(40, 40);
-        weighting_matrix.setIdentity();
+    //     /* number of ambiguity variables */
+    //     int AR_cnt = 0;
+    //     AR_cnt = ar_state_num[length-1][0];
+    //     // LOG(INFO) << "AR_cnt-> " << AR_cnt;
+    //     // LOG(INFO) << "ar_state_num[k][0]-> "<< ar_state_num[length-1][0];
+    //     AR_cnt = ar_state_num[length-1][0];
+    //     jacobian_matrix.resize(40, 3 + AR_cnt);
+    //     jacobian_matrix.setIdentity();
+    //     weighting_matrix.resize(40, 40);
+    //     weighting_matrix.setIdentity();
 
-        std::map<double, std::vector<gnss_comm::ObsPtr>>::iterator iter_cov; // station gnss measurements map iterator
-        iter_cov = station_gnss_raw_map.end();
-        iter_cov--;
+    //     std::map<double, std::vector<gnss_comm::ObsPtr>>::iterator iter_cov; // station gnss measurements map iterator
+    //     iter_cov = station_gnss_raw_map.end();
+    //     iter_cov--;
 
-        std::vector<gnss_comm::ObsPtr> st_gnss_data = (iter_cov->second);
-        int sv_cnt = st_gnss_data.size();
-        double t = iter_cov->first; //最近一个历元的时间
+    //     std::vector<gnss_comm::ObsPtr> st_gnss_data = (iter_cov->second);
+    //     int sv_cnt = st_gnss_data.size();
+    //     double t = iter_cov->first; //最近一个历元的时间
 
-        /* find user end gnss data with closest time */
-        /* 使用移动端最近历元的观测数据*/
-        std::vector<gnss_comm::ObsPtr> closest_gnss_data;
-        findClosestEpoch(t, gnss_raw_map, closest_gnss_data);
+    //     /* find user end gnss data with closest time */
+    //     /* 使用移动端最近历元的观测数据*/
+    //     std::vector<gnss_comm::ObsPtr> closest_gnss_data;
+    //     findClosestEpoch(t, gnss_raw_map, closest_gnss_data);
 
-        /* get the dd measurements between
-        * 1. st_gnss_data from station
-        * 2. closest_gnss_data from user end
-        */
+    //     /* get the dd measurements between
+    //     * 1. st_gnss_data from station
+    //     * 2. closest_gnss_data from user end
+    //     */
 
-        /* tranverse station gnss map */
-        int carrier_phase_index = 0;
-        int jac_row = 0;
-        //最新的位置状态信息
-        Eigen::Vector3d u_pose(state_array[length-1][0], state_array[length-1][1], state_array[length-1][2]);
-        for(int q = 0; q < sv_cnt; q++)
-        {
-            double sat_id = st_gnss_data[q]->sat;
-            gnss_comm::ObsPtr u_master_sv, u_iSV, r_master_sv;
+    //     /* tranverse station gnss map */
+    //     int carrier_phase_index = 0;
+    //     int jac_row = 0;
+    //     //最新的位置状态信息
+    //     Eigen::Vector3d u_pose(state_array[length-1][0], state_array[length-1][1], state_array[length-1][2]);
+    //     for(int q = 0; q < sv_cnt; q++)
+    //     {
+    //         double sat_id = st_gnss_data[q]->sat;
+    //         gnss_comm::ObsPtr u_master_sv, u_iSV, r_master_sv;
             
-            /* find the master satellite from the user end */
-            //构建双差观测方程（又一次重复操作???）
-            if(findMasterSatellite(sat_id, closest_gnss_data, u_master_sv, u_iSV,sv_info_map))
-            {
-                /* find the satellite from station gnss iwth the same id with master satellite */
-                findSatellitewithSameId(u_master_sv->sat, st_gnss_data, r_master_sv);
+    //         /* find the master satellite from the user end */
+    //         //构建双差观测方程（又一次重复操作???）
+    //         if(findMasterSatellite(sat_id, closest_gnss_data, u_master_sv, u_iSV,sv_info_map))
+    //         {
+    //             /* find the satellite from station gnss iwth the same id with master satellite */
+    //             findSatellitewithSameId(u_master_sv->sat, st_gnss_data, r_master_sv);
 
-                DDMeasurement DD_measurement;
-                DD_measurement.u_master_SV = u_master_sv;
-                DD_measurement.u_iSV = u_iSV;
+    //             DDMeasurement DD_measurement;
+    //             DD_measurement.u_master_SV = u_master_sv;
+    //             DD_measurement.u_iSV = u_iSV;
 
-                DD_measurement.r_master_SV = r_master_sv;
-                DD_measurement.r_iSV = st_gnss_data[q];
+    //             DD_measurement.r_master_SV = r_master_sv;
+    //             DD_measurement.r_iSV = st_gnss_data[q];
 
-                Eigen::Vector3d base_pose(station_x, station_y, station_z);
+    //             Eigen::Vector3d base_pose(station_x, station_y, station_z);
 
-                /* get the row for jocabian of pr DD*/
-                gnss_comm_extra::getPrDDJacobian(sv_info_map, u_pose, base_pose, DD_measurement, jacobian_matrix,jac_row, weighting_matrix);
+    //             /* get the row for jocabian of pr DD*/
+    //             gnss_comm_extra::getPrDDJacobian(sv_info_map, u_pose, base_pose, DD_measurement, jacobian_matrix,jac_row, weighting_matrix);
                 
-                jac_row++;
-                if(checkCarrierPhaseConsistency(DD_measurement) && (carrier_phase_index<AR_cnt)) 
-                // (carrier_phase_index<10))
-                {
-                        /* get the row for jocabian of cp DD*/
-                        gnss_comm_extra::getCpDDJacobian(sv_info_map, u_pose, base_pose, DD_measurement, jacobian_matrix,jac_row, carrier_phase_index, weighting_matrix);
+    //             jac_row++;
+    //             if(checkCarrierPhaseConsistency(DD_measurement) && (carrier_phase_index<AR_cnt)) 
+    //             // (carrier_phase_index<10))
+    //             {
+    //                     /* get the row for jocabian of cp DD*/
+    //                     gnss_comm_extra::getCpDDJacobian(sv_info_map, u_pose, base_pose, DD_measurement, jacobian_matrix,jac_row, carrier_phase_index, weighting_matrix);
 
-                    carrier_phase_index++;
-                    // LOG(INFO)<<"add double-difference carrier phase factor";
-                    jac_row++;
-                }
-                else
-                {
-                    // LOG(INFO)<<"no carrier-phase measurement";
-                }
-            }
-        }
+    //                 carrier_phase_index++;
+    //                 // LOG(INFO)<<"add double-difference carrier phase factor";
+    //                 jac_row++;
+    //             }
+    //             else
+    //             {
+    //                 // LOG(INFO)<<"no carrier-phase measurement";
+    //             }
+    //         }
+    //     }
 
-        Eigen::MatrixXd jacobian_matrix_;
-        Eigen::MatrixXd weighting_matrix_;
-        weighting_matrix_.resize(jac_row,jac_row);
-        jacobian_matrix_.resize(jac_row, jacobian_matrix.cols());
-        for(int i = 0; i < jac_row; i++)
-            for(int j = 0; j < jacobian_matrix.cols(); j++)
-            {
-                jacobian_matrix_(i,j) = jacobian_matrix(i,j);
-            }
+    //     Eigen::MatrixXd jacobian_matrix_;
+    //     Eigen::MatrixXd weighting_matrix_;
+    //     weighting_matrix_.resize(jac_row,jac_row);
+    //     jacobian_matrix_.resize(jac_row, jacobian_matrix.cols());
+    //     for(int i = 0; i < jac_row; i++)
+    //         for(int j = 0; j < jacobian_matrix.cols(); j++)
+    //         {
+    //             jacobian_matrix_(i,j) = jacobian_matrix(i,j);
+    //         }
 
-        for(int i = 0; i <jac_row; i++)
-            for(int j = 0; j <jac_row; j++)
-            {
-                weighting_matrix_(i,j) = weighting_matrix(i,j);
-            }
+    //     for(int i = 0; i <jac_row; i++)
+    //         for(int j = 0; j <jac_row; j++)
+    //         {
+    //             weighting_matrix_(i,j) = weighting_matrix(i,j);
+    //         }
 
-        Eigen::MatrixXd jacobian_mat;
-        jacobian_mat = (jacobian_matrix_.transpose() * weighting_matrix_ *jacobian_matrix_).inverse();
+    //     Eigen::MatrixXd jacobian_mat;
+    //     jacobian_mat = (jacobian_matrix_.transpose() * weighting_matrix_ *jacobian_matrix_).inverse();
 
-        // std::cout<<"jacobian_mat-> \n"<<std::setprecision(4)<<jacobian_mat<<std::endl;
-        // std::cout<<"weighting_matrix_-> \n"<<std::setprecision(4)<<weighting_matrix_<<std::endl;
+    //     // std::cout<<"jacobian_mat-> \n"<<std::setprecision(4)<<jacobian_mat<<std::endl;
+    //     // std::cout<<"weighting_matrix_-> \n"<<std::setprecision(4)<<weighting_matrix_<<std::endl;
         
-        Eigen::MatrixXd Qa, Qb; // Qa: covariance of phase bias
-        Qa.resize(AR_cnt, AR_cnt);
-        Qb.resize(3, 3);
-        for(int i = 3; i < AR_cnt+3; i++)
-            for(int j = 3; j < AR_cnt+3; j++)
-            {
-                Qa(i-3,j-3) = jacobian_mat(i,j);
-            }
-        for(int i = 0; i < 3; i++)
-            for(int j = 0; j < 3; j++)
-            {
-                Qb(i,j) = jacobian_mat(i,j);
-            }
-        // std::cout<<"Qa-> \n"<<std::setprecision(4)<<Qa<<std::endl;
+    //     Eigen::MatrixXd Qa, Qb; // Qa: covariance of phase bias
+    //     Qa.resize(AR_cnt, AR_cnt);
+    //     Qb.resize(3, 3);
+    //     for(int i = 3; i < AR_cnt+3; i++)
+    //         for(int j = 3; j < AR_cnt+3; j++)
+    //         {
+    //             Qa(i-3,j-3) = jacobian_mat(i,j);
+    //         }
+    //     for(int i = 0; i < 3; i++)
+    //         for(int j = 0; j < 3; j++)
+    //         {
+    //             Qb(i,j) = jacobian_mat(i,j);
+    //         }
+    //     // std::cout<<"Qa-> \n"<<std::setprecision(4)<<Qa<<std::endl;
 
-        double *a;
-        double *Q;
-        double *F;
-        double S[2];
-        double n  = AR_cnt;
-        double m = 2;
-        F = new double[static_cast<size_t>(n) * 2];
-        size_t n_size = static_cast<size_t>(n);
-        size_t total = n_size * n_size;  // 两个 size_t 相乘
-        Q = new double[total];
-        a= new double[static_cast<size_t>(n) * 1];
+    //     double *a;
+    //     double *Q;
+    //     double *F;
+    //     double S[2];
+    //     double n  = AR_cnt;
+    //     double m = 2;
+    //     F = new double[static_cast<size_t>(n) * 2];
+    //     size_t n_size = static_cast<size_t>(n);
+    //     size_t total = n_size * n_size;  // 两个 size_t 相乘
+    //     Q = new double[total];
+    //     a= new double[static_cast<size_t>(n) * 1];
 
-        for(int i = 0; i < n; i++)
-        {
-            // a[i] = ar_state_array[length-1][i];
-            a[i] = ar_state_array[length-1][i];
-        }
-        std::vector<double> cov_vector;
-        // fi_cov_ar = fi_cov_ar.inverse();
-        for(int i = 0; i < n; i++) // cols
-            for(int j = 0; j < n; j++) // rows
-            {
-                cov_vector.push_back(Qa(j,i));
-                // LOG(INFO) << "Q[i+j]-> \n" << Q[i+j];
-                // if(i=i) 
-            }
+    //     for(int i = 0; i < n; i++)
+    //     {
+    //         // a[i] = ar_state_array[length-1][i];
+    //         a[i] = ar_state_array[length-1][i];
+    //     }
+    //     std::vector<double> cov_vector;
+    //     // fi_cov_ar = fi_cov_ar.inverse();
+    //     for(int i = 0; i < n; i++) // cols
+    //         for(int j = 0; j < n; j++) // rows
+    //         {
+    //             cov_vector.push_back(Qa(j,i));
+    //             // LOG(INFO) << "Q[i+j]-> \n" << Q[i+j];
+    //             // if(i=i) 
+    //         }
             
-        for(int i=0; i<cov_vector.size();i++)
-        {
-            Q[i] = cov_vector[i];
-        }
+    //     for(int i=0; i<cov_vector.size();i++)
+    //     {
+    //         Q[i] = cov_vector[i];
+    //     }
 
-        lambda(n, m, a, Q, F, S);
-        Eigen::MatrixXd Q_ba, Q_ab;
-        Q_ba.resize(3,AR_cnt);
-        Q_ab.resize(AR_cnt,3);
-        for(int i = 0; i < 3; i++) // rows
-            for(int j = 3; j < (3+ AR_cnt); j++) // cols
-            {
-                Q_ba(i,j-3) = jacobian_mat(i,j);
-                // LOG(INFO) << "Q[i+j]-> \n" << Q[i+j];
-                // if(i=i) 
-            }
-        for(int i = 3; i < (3 + AR_cnt); i++) // rows
-            for(int j = 0; j < 3; j++) // cols
-            {
-                Q_ab(i-3,j) = jacobian_mat(i,j);
-                // LOG(INFO) << "Q[i+j]-> \n" << Q[i+j];
-                // if(i=i) 
-            }
-        Eigen::MatrixXd integer_b, float_b;
-        integer_b.resize(AR_cnt, 1);
-        float_b.resize(AR_cnt, 1);
-        for(int i=0; i<AR_cnt; i++)
-        {
-            // float_b(i) = ar_state_array[length-1][i];
-            float_b(i) = ar_state_array[length-1][i];
-            integer_b(i) = F[i];
-        }
-        // std::cout<<"Q_ba-> \n"<<std::setprecision(4)<<Q_ba<<std::endl;
-        Eigen::Matrix<double, 3,1> a_state;
-        a_state<< state_array[length-1][0], state_array[length-1][1], state_array[length-1][2]; 
-        a_state = a_state + Q_ba * Qa.inverse() * (float_b - integer_b);
-        // a_state = a_state - Q_ab * Qb.inverse() * (float_b - integer_b);
+    //     lambda(n, m, a, Q, F, S);
+    //     Eigen::MatrixXd Q_ba, Q_ab;
+    //     Q_ba.resize(3,AR_cnt);
+    //     Q_ab.resize(AR_cnt,3);
+    //     for(int i = 0; i < 3; i++) // rows
+    //         for(int j = 3; j < (3+ AR_cnt); j++) // cols
+    //         {
+    //             Q_ba(i,j-3) = jacobian_mat(i,j);
+    //             // LOG(INFO) << "Q[i+j]-> \n" << Q[i+j];
+    //             // if(i=i) 
+    //         }
+    //     for(int i = 3; i < (3 + AR_cnt); i++) // rows
+    //         for(int j = 0; j < 3; j++) // cols
+    //         {
+    //             Q_ab(i-3,j) = jacobian_mat(i,j);
+    //             // LOG(INFO) << "Q[i+j]-> \n" << Q[i+j];
+    //             // if(i=i) 
+    //         }
+    //     Eigen::MatrixXd integer_b, float_b;
+    //     integer_b.resize(AR_cnt, 1);
+    //     float_b.resize(AR_cnt, 1);
+    //     for(int i=0; i<AR_cnt; i++)
+    //     {
+    //         // float_b(i) = ar_state_array[length-1][i];
+    //         float_b(i) = ar_state_array[length-1][i];
+    //         integer_b(i) = F[i];
+    //     }
+    //     // std::cout<<"Q_ba-> \n"<<std::setprecision(4)<<Q_ba<<std::endl;
+    //     Eigen::Matrix<double, 3,1> a_state;
+    //     a_state<< state_array[length-1][0], state_array[length-1][1], state_array[length-1][2]; 
+    //     a_state = a_state + Q_ba * Qa.inverse() * (float_b - integer_b);
+    //     // a_state = a_state - Q_ab * Qb.inverse() * (float_b - integer_b);
 
-        Eigen::Matrix<double ,3,1> ENU;
-        Eigen::Matrix<double, 3,1> state;
-        state<< state_array[length-1][0], state_array[length-1][1], state_array[length-1][2];
-        double fix_flag = 0;
-        if((S[1]/S[0])> 1.5)
-        {
-            state = a_state; // 
-            fix_flag = 1;
-            ROS_INFO("<<<<<Fixed!!!!!!!!!!!!!!!!!!!!!!!!!!>>>>>");
-            fixed_cnt++;
-        }
-        fixedStateGNSSRTK = state;
+    //     Eigen::Matrix<double ,3,1> ENU;
+    //     Eigen::Matrix<double, 3,1> state;
+    //     state<< state_array[length-1][0], state_array[length-1][1], state_array[length-1][2];
+    //     double fix_flag = 0;
+    //     if((S[1]/S[0])> 1.5)
+    //     {
+    //         state = a_state; // 
+    //         fix_flag = 1;
+    //         ROS_INFO("<<<<<Fixed!!!!!!!!!!!!!!!!!!!!!!!!!!>>>>>");
+    //         fixed_cnt++;
+    //     }
+    //     fixedStateGNSSRTK = state;
 
-        return true;
-    }
+    //     return true;
+    // }
 
     /* save graph state to vector for next solving */
     bool saveGraphStateToVector(bool allsave = false)

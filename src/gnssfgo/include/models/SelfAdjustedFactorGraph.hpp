@@ -386,7 +386,7 @@ public:
         return false;
     }
 
-    bool ObservationCheck()
+    void ObservationCheck()
     {
         // 重置卫星连续观测检查标志
         for (auto& pair : sat_lock_check) 
@@ -446,7 +446,7 @@ public:
     // for single freq check
     bool cycleSlipDetect(int sat_id, int freq)
     {
-        auto mark_slip = [this, sat_id, int freq]() {
+        auto mark_slip = [this, sat_id, freq]() {
             if(freq == 1)
             {
                 sat_lock_count_l1[sat_id] = 0;
@@ -477,8 +477,8 @@ public:
 
         gnss_comm::ObsPtr prev_obs;
         gnss_comm::ObsPtr curr_obs;
-        findSatellitewithSameId(sat_id, allobs_prev->second, prev_obs);
-        findSatellitewithSameId(sat_id, allobs_now->second, curr_obs);
+        findSatellitewithSameId(sat_id, allobs_prev->second, prev_obs,freq);
+        findSatellitewithSameId(sat_id, allobs_now->second, curr_obs,freq);
         if (!prev_obs || !curr_obs)
         {
             // 没有该卫星的观测
@@ -593,12 +593,13 @@ public:
         }
 
         // 载波相位变化预测值
-        const double delta_cp_pred = ((curr_vel + prev_vel).dot(los) * (curr_time_sec - prev_time_sec) / 10.0)/(2 * lambda);
+
+        const double delta_cp_pred = ((curr_vel + prev_vel).dot(los) * (curr_time_sec - prev_time_sec) / 10.0)/(2 * curr_lambda);
         // 载波相位变化观测值
 
-        double sat_cp_const = (freq==1) ? sat_cp_const_l1[sat_id] : ((freq==2) ? sat_cp_const_l2[sat_id] : 0.0)
+        // double sat_cp_const = (freq==1) ? sat_cp_const_l1[sat_id] : ((freq==2) ? sat_cp_const_l2[sat_id] : 0.0)
 
-        const double delta_cp_obs = (curr_cp_cycle - prev_cp_cycle) - sat_cp_const;
+        const double delta_cp_obs = (curr_cp_cycle - prev_cp_cycle) - sat_cp_const[sat_id];
         // printf(" | obs delta cp: %f \n",(curr_cp_cycle - prev_cp_cycle));
         
         constexpr double kCycleSlipThresholdCycle = 1.0; // 预测和观测的载波相位变化超过1周期则判定为可能发生了周跳

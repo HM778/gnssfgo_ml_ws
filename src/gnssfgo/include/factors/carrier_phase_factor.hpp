@@ -93,7 +93,10 @@ struct TRDDCPFactor
                 L2_freq(o, &li);
                 return (li >= 0 && li < (int)o->cp.size()) ? (o->cp[li] * sv.lamda_l2) : 0.0;
             }
-            
+            else
+            {
+                return 0.0;
+            }
         };
 
         auto trddcp_sigma = [this](const gnss_comm::ObsPtr& o, const std::map<int, sv_info>& svmap) -> double {

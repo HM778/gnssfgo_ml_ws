@@ -9,7 +9,7 @@
 #include "../datatype.h"
 
 // 检查观测数据中载波相位是否有效
-bool getValidCarrierPhase(const gnss_comm::ObsPtr& obs,int& freq_idx, double& cp_cycle, int freq)
+bool getValidCarrierPhase(const gnss_comm::ObsPtr& obs, double& cp_cycle, int freq)
 {
     if (!obs)
     {
@@ -21,7 +21,7 @@ bool getValidCarrierPhase(const gnss_comm::ObsPtr& obs,int& freq_idx, double& cp
         return std::isfinite(v) && std::abs(v) >= 1.0e-3;
     };
 
-    freq_idx = -1;
+    int freq_idx = -1;
     cp_cycle = 0.0;
 
     if(freq == 1)
@@ -95,42 +95,5 @@ bool hasLLISlip(const gnss_comm::ObsPtr& obs, int idx)
     return (lli & 0x03) != 0;
 }
 
-/**
- * @brief check the wheather all the consided satellite have carrier-phase
- * @param gnss double-difference measurements
- * @return true or false
-*/
-bool checkCarrierPhaseConsistency(DDMeasurement DD_measurement)
-{
-    int check_freq = DD_measurement.freq_idx;
-
-    int idx_u_m = -1;
-    int idx_u_i = -1;
-    int idx_r_m = -1;
-    int idx_r_i = -1;
-    double cp_u_m = 0.0;
-    double cp_u_i = 0.0;
-    double cp_r_m = 0.0;
-    double cp_r_i = 0.0;
-
-    if (!getValidCarrierPhase(DD_measurement.u_master_SV, idx_u_m, cp_u_m,check_freq) ||
-        !getValidCarrierPhase(DD_measurement.u_iSV, idx_u_i, cp_u_i,check_freq) ||
-        !getValidCarrierPhase(DD_measurement.r_master_SV, idx_r_m, cp_r_m,check_freq) ||
-        !getValidCarrierPhase(DD_measurement.r_iSV, idx_r_i, cp_r_i,check_freq))
-    {
-        return false;
-    }
-
-    // Reject obvious loss-of-lock flags.
-    if (hasLLISlip(DD_measurement.u_master_SV, idx_u_m) ||
-        hasLLISlip(DD_measurement.u_iSV, idx_u_i) ||
-        hasLLISlip(DD_measurement.r_master_SV, idx_r_m) ||
-        hasLLISlip(DD_measurement.r_iSV, idx_r_i))
-    {
-        return false;
-    }
-
-    return true;
-}
 
 #endif // CHECKING_HPP
