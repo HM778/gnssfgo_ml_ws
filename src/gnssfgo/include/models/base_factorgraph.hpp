@@ -99,6 +99,7 @@ public:
     /* factor counts for per-iteration summary */
     int last_added_psr_factor_count = 0;
     int last_added_doppler_factor_count = 0;
+    int max_psr_factors_per_epoch_ = 24;
 
     /* latest GNSS-RTK solution with LAMBDA */
     Eigen::Matrix<double, 3,1> fixedStateGNSSRTK;
@@ -846,6 +847,15 @@ public:
             const std::vector<gnss_comm_extra::CorrectedPseudorangeMeasurement> corrected_measurements =
                 gnss_comm_extra::buildCorrectedPseudorangeMeasurements(epoch_gnss_data, epoch_ephems, state_guess, has_state_guess, iono_params);
 
+            struct PsrCandidate
+            {
+                const gnss_comm_extra::CorrectedPseudorangeMeasurement *measurement = nullptr;
+                double effective_sigma = 0.0;
+                double priority = 0.0;
+            };
+            std::vector<PsrCandidate> candidates;
+            candidates.reserve(corrected_measurements.size());
+
             for (const auto &measurement : corrected_measurements)
             {
                 if (!measurement.valid || measurement.sat_sys == "Unknown")
@@ -853,30 +863,52 @@ public:
                     continue;
                 }
 
-                // OSQA Transformer 质量评分集成: 根据卫星可靠性调整伪距因子权重
+                double quality = 1.0;
                 double effective_sigma = measurement.sigma;
 #ifdef ENABLE_TRANSFORMER_BRIDGE
-                double quality = getQualityScore(measurement.sat);
-                // 低质量卫星: 增大 sigma → 降低置信度，极端低质量直接跳过
+                quality = getQualityScore(measurement.sat);
                 if (quality < osqa_quality_threshold_ * 0.3)
                 {
-                    continue;  // 完全不可信，跳过
+                    continue;
                 }
                 effective_sigma = measurement.sigma / std::max(quality, 0.01);
 #endif
 
+                const double elev_rad = std::max(measurement.elevation_rad, 5.0 * D2R);
+                const double elev_weight = std::max(0.1, std::sin(elev_rad));
+                const double sigma_safe = std::max(effective_sigma, 1.0e-3);
+                const double priority = (quality * elev_weight) / sigma_safe;
+
+                candidates.push_back(PsrCandidate{&measurement, effective_sigma, priority});
+            }
+
+            if (candidates.empty())
+            {
+                continue;
+            }
+
+            std::sort(candidates.begin(), candidates.end(),
+                      [](const PsrCandidate &a, const PsrCandidate &b) {
+                          return a.priority > b.priority;
+                      });
+
+            const int cap_per_epoch = std::max(4, max_psr_factors_per_epoch_);
+            const int keep_count = std::min(static_cast<int>(candidates.size()), cap_per_epoch);
+            for (int i = 0; i < keep_count; ++i)
+            {
+                const auto *measurement = candidates[i].measurement;
                 ceres::CostFunction* ps_function = new ceres::AutoDiffCostFunction<pseudorangeFactor, 1
                                                                 , state_size>(new pseudorangeFactor(
-                                                                    measurement.sat_sys,
-                                                                    measurement.sat_pos.x(),
-                                                                    measurement.sat_pos.y(),
-                                                                    measurement.sat_pos.z(),
-                                                                    measurement.pseudorange,
-                                                                    effective_sigma,
-                                                                    measurement.sv_dt_sec,
-                                                                    measurement.tgd_sec,
-                                                                    measurement.ion_delay_m,
-                                                                    measurement.tro_delay_m
+                                                                    measurement->sat_sys,
+                                                                    measurement->sat_pos.x(),
+                                                                    measurement->sat_pos.y(),
+                                                                    measurement->sat_pos.z(),
+                                                                    measurement->pseudorange,
+                                                                    candidates[i].effective_sigma,
+                                                                    measurement->sv_dt_sec,
+                                                                    measurement->tgd_sec,
+                                                                    measurement->ion_delay_m,
+                                                                    measurement->tro_delay_m
                                                                 ));
                 problem.AddResidualBlock(ps_function, loss_function, state_array[epoch_idx]);
                 ++added_pseudorange_factor_count;
@@ -1920,5 +1952,3 @@ public:
     }
 
 };
-
-

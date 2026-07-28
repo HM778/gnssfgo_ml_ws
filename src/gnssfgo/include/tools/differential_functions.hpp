@@ -124,6 +124,10 @@ void findSatellitewithSameId(double id, std::vector<gnss_comm::ObsPtr> gnss_data
     int search_l1 = -1, search_l2 = -1;
     for(int i = 0; i < length; i++)
     {
+        if(!gnss_data[i])
+        {
+            continue;
+        }
         if(gnss_data[i]->sat == id )
         {
             gnss_comm::L1_freq(gnss_data[i],&search_l1);

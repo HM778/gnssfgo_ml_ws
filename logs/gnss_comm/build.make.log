@@ -1,22 +1,25 @@
 [  0%] Built target std_msgs_generate_messages_cpp
+[  0%] Built target std_msgs_generate_messages_nodejs
+[  0%] Built target std_msgs_generate_messages_eus
 [  0%] Built target std_msgs_generate_messages_py
 [  0%] Built target std_msgs_generate_messages_lisp
-[  0%] Built target std_msgs_generate_messages_eus
-[  0%] Built target std_msgs_generate_messages_nodejs
-[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssEphemMsg
-[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssMeasMsg
-[  0%] Built target _gnss_comm_generate_messages_check_deps_StampedFloat64Array
-[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssPVTSolnMsg
-[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssBestXYZMsg
-[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssObsMsg
-[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssTimePulseInfoMsg
-[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssGloEphemMsg
-[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssSvsMsg
 [  0%] Built target _gnss_comm_generate_messages_check_deps_GnssTimeMsg
-[ 36%] Built target gnss_comm_generate_messages_eus
-[ 43%] Built target gnss_comm_generate_messages_py
-[ 72%] Built target gnss_comm_generate_messages_cpp
-[ 72%] Built target gnss_comm_generate_messages_nodejs
-[ 89%] Built target gnss_comm_generate_messages_lisp
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssPVTSolnMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_StampedFloat64Array
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssBestXYZMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssEphemMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssGloEphemMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssTimePulseInfoMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssSvsMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssObsMsg
+[  0%] Built target _gnss_comm_generate_messages_check_deps_GnssMeasMsg
+[ 18%] Built target gnss_comm_generate_messages_eus
+[ 53%] Built target gnss_comm_generate_messages_cpp
+[ 55%] Built target gnss_comm_generate_messages_py
+[ 72%] Built target gnss_comm_generate_messages_lisp
+[ 89%] Built target gnss_comm_generate_messages_nodejs
+[35m[1mScanning dependencies of target gnss_comm[0m
 [ 89%] Built target gnss_comm_generate_messages
+[ 91%] [32mBuilding CXX object CMakeFiles/gnss_comm.dir/src/gnss_spp_extra.cpp.o[0m
+[ 93%] [32m[1mLinking CXX shared library /home/nvidia/Work/gnssfgo_ml_ws/devel/.private/gnss_comm/lib/libgnss_comm.so[0m
 [100%] Built target gnss_comm

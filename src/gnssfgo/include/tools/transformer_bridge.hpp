@@ -29,9 +29,12 @@
 #include <sstream>
 #include <map>
 #include <vector>
+#include <deque>
 #include <mutex>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <limits>
 
 #include <Eigen/Dense>
 #include <gnss_comm/gnss_utility.hpp>
@@ -98,20 +101,132 @@ inline bool appendJsonLine(const std::string &filepath, const json &j)
     return true;
 }
 
-/**
- * 从 JSONL 文件读取所有行
- *
- * @param filepath  文件路径
- * @return          JSON 对象列表（每行一个）
- */
-inline std::vector<json> readAllJsonLines(const std::string &filepath)
+struct QualityEpochEntry
 {
-    std::vector<json> lines;
-    std::ifstream ifs(filepath);
+    bool has_time_frame = false;
+    double time_frame = 0.0;
+    std::map<int, SatQualityInfo> scores;
+};
+
+struct QualityFileCache
+{
+    std::streamoff read_offset = 0;
+    std::deque<QualityEpochEntry> recent_epochs;
+};
+
+inline std::map<std::string, QualityFileCache> &qualityFileCaches()
+{
+    static std::map<std::string, QualityFileCache> caches;
+    return caches;
+}
+
+inline std::mutex &qualityFileCachesMutex()
+{
+    static std::mutex mtx;
+    return mtx;
+}
+
+inline std::map<int, SatQualityInfo> parseQualityScoresFromSatellites(const json &satellites)
+{
+    std::map<int, SatQualityInfo> result;
+
+    auto parse_one = [&result](const std::string &key, const json &sat_data) {
+        SatQualityInfo info;
+        info.quality = sat_data.value("quality", 1.0);
+        info.trust_level = sat_data.value("trust_level", "trusted");
+
+        if (sat_data.contains("details"))
+        {
+            const json &details = sat_data["details"];
+            info.q_transformer = details.value("transformer", 1.0);
+            info.q_graph = details.value("graph", 1.0);
+            info.q_temporal = details.value("temporal", 1.0);
+        }
+
+        if (sat_data.contains("flags"))
+        {
+            info.flags = sat_data["flags"].get<std::vector<std::string>>();
+        }
+
+        int sat_id = sat_data.value("sat_id", 0);
+        if (sat_id <= 0 && !key.empty())
+        {
+            bool all_digits = true;
+            for (char c : key)
+            {
+                if (c < '0' || c > '9')
+                {
+                    all_digits = false;
+                    break;
+                }
+            }
+            if (all_digits)
+            {
+                const long id_long = std::strtol(key.c_str(), nullptr, 10);
+                if (id_long > 0 && id_long <= std::numeric_limits<int>::max())
+                {
+                    sat_id = static_cast<int>(id_long);
+                }
+            }
+        }
+
+        if (sat_id > 0)
+        {
+            result[sat_id] = info;
+        }
+    };
+
+    if (satellites.is_array())
+    {
+        for (const auto &sat_data : satellites)
+        {
+            if (!sat_data.is_object())
+            {
+                continue;
+            }
+            parse_one("", sat_data);
+        }
+    }
+    else if (satellites.is_object())
+    {
+        for (auto it = satellites.begin(); it != satellites.end(); ++it)
+        {
+            parse_one(it.key(), it.value());
+        }
+    }
+
+    return result;
+}
+
+inline void updateQualityCacheFromFile(const std::string &filepath, QualityFileCache &cache)
+{
+    std::ifstream ifs(filepath, std::ios::in | std::ios::binary);
     if (!ifs.is_open())
     {
-        return lines;
+        cache.read_offset = 0;
+        cache.recent_epochs.clear();
+        return;
     }
+
+    ifs.seekg(0, std::ios::end);
+    const std::streamoff file_size = ifs.tellg();
+    if (file_size < 0)
+    {
+        return;
+    }
+
+    if (cache.read_offset < 0 || cache.read_offset > file_size)
+    {
+        cache.read_offset = 0;
+        cache.recent_epochs.clear();
+    }
+
+    if (cache.read_offset == file_size)
+    {
+        return;
+    }
+
+    ifs.seekg(cache.read_offset, std::ios::beg);
 
     std::string line;
     while (std::getline(ifs, line))
@@ -120,17 +235,41 @@ inline std::vector<json> readAllJsonLines(const std::string &filepath)
         {
             continue;
         }
+
         try
         {
-            lines.push_back(json::parse(line));
+            const json epoch_json = json::parse(line);
+            if (!epoch_json.contains("satellites"))
+            {
+                continue;
+            }
+
+            QualityEpochEntry entry;
+            entry.scores = parseQualityScoresFromSatellites(epoch_json["satellites"]);
+            if (entry.scores.empty())
+            {
+                continue;
+            }
+
+            if (epoch_json.contains("time_frame"))
+            {
+                entry.has_time_frame = true;
+                entry.time_frame = epoch_json["time_frame"].get<double>();
+            }
+
+            cache.recent_epochs.push_back(std::move(entry));
+            while (cache.recent_epochs.size() > 512)
+            {
+                cache.recent_epochs.pop_front();
+            }
         }
         catch (const json::parse_error &e)
         {
-            // 跳过无法解析的行
             fprintf(stderr, "[TransformerBridge] JSON parse error: %s\n", e.what());
         }
     }
-    return lines;
+
+    cache.read_offset = file_size;
 }
 
 // ==================== 数据导出 (gnssfgo → OSQA) ====================
@@ -324,91 +463,48 @@ inline std::map<int, SatQualityInfo> readLatestQualityScores(
     const std::string &filepath,
     double time_frame)
 {
-    std::map<int, SatQualityInfo> result;
+    std::lock_guard<std::mutex> lk(qualityFileCachesMutex());
+    QualityFileCache &cache = qualityFileCaches()[filepath];
+    updateQualityCacheFromFile(filepath, cache);
 
-    // 读取所有行并找到匹配 time_frame 的最新 epoch
-    auto all_lines = readAllJsonLines(filepath);
-    if (all_lines.empty())
+    if (cache.recent_epochs.empty())
     {
-        return result;
+        return {};
     }
 
-    // 从后向前查找匹配的 epoch
-    const json *match = nullptr;
-    for (auto it = all_lines.rbegin(); it != all_lines.rend(); ++it)
+    const QualityEpochEntry *match = nullptr;
+    for (auto it = cache.recent_epochs.rbegin(); it != cache.recent_epochs.rend(); ++it)
     {
-        if (it->contains("time_frame"))
+        if (!it->has_time_frame)
         {
-            double tf = (*it)["time_frame"].get<double>();
-            if (std::abs(tf - time_frame) < 1e-3)
-            {
-                match = &(*it);
-                break;
-            }
+            continue;
+        }
+        if (std::abs(it->time_frame - time_frame) < 1e-3)
+        {
+            match = &(*it);
+            break;
         }
     }
 
-    // 如果没找到精确匹配，找最接近的
-    if (match == nullptr)
+    if (!match)
     {
         double best_diff = 1e9;
-        for (auto it = all_lines.rbegin(); it != all_lines.rend(); ++it)
+        for (auto it = cache.recent_epochs.rbegin(); it != cache.recent_epochs.rend(); ++it)
         {
-            if (it->contains("time_frame"))
+            if (!it->has_time_frame)
             {
-                double tf = (*it)["time_frame"].get<double>();
-                double diff = std::abs(tf - time_frame);
-                if (diff < best_diff && diff < 60.0)  // 最多容忍 60 个时间帧的差异
-                {
-                    best_diff = diff;
-                    match = &(*it);
-                }
+                continue;
+            }
+            const double diff = std::abs(it->time_frame - time_frame);
+            if (diff < best_diff && diff < 60.0)
+            {
+                best_diff = diff;
+                match = &(*it);
             }
         }
     }
 
-    if (match == nullptr || !match->contains("satellites"))
-    {
-        return result;
-    }
-
-    // 解析每颗卫星的质量评分
-    const json &satellites = (*match)["satellites"];
-    for (auto it = satellites.begin(); it != satellites.end(); ++it)
-    {
-        SatQualityInfo info;
-        const json &sat_data = it.value();
-
-        info.quality = sat_data.value("quality", 1.0);
-        info.trust_level = sat_data.value("trust_level", "trusted");
-
-        if (sat_data.contains("details"))
-        {
-            const json &details = sat_data["details"];
-            info.q_transformer = details.value("transformer", 1.0);
-            info.q_graph = details.value("graph", 1.0);
-            info.q_temporal = details.value("temporal", 1.0);
-        }
-
-        if (sat_data.contains("flags"))
-        {
-            info.flags = sat_data["flags"].get<std::vector<std::string>>();
-        }
-
-        // 同时尝试从 PRN 字符串和 sat_id 整数读取
-        int sat_id = 0;
-        if (sat_data.contains("sat_id"))
-        {
-            sat_id = sat_data["sat_id"].get<int>();
-        }
-
-        if (sat_id > 0)
-        {
-            result[sat_id] = info;
-        }
-    }
-
-    return result;
+    return match ? match->scores : std::map<int, SatQualityInfo>{};
 }
 
 /**
@@ -422,49 +518,16 @@ inline std::map<int, SatQualityInfo> readLatestQualityScores(
 inline std::map<int, SatQualityInfo> readLatestQualityScores(
     const std::string &filepath)
 {
-    std::map<int, SatQualityInfo> result;
-    auto all_lines = readAllJsonLines(filepath);
-    if (all_lines.empty())
+    std::lock_guard<std::mutex> lk(qualityFileCachesMutex());
+    QualityFileCache &cache = qualityFileCaches()[filepath];
+    updateQualityCacheFromFile(filepath, cache);
+
+    if (cache.recent_epochs.empty())
     {
-        return result;
+        return {};
     }
 
-    // 取最后一行
-    const json &last = all_lines.back();
-    if (!last.contains("satellites"))
-    {
-        return result;
-    }
-
-    for (auto it = last["satellites"].begin(); it != last["satellites"].end(); ++it)
-    {
-        SatQualityInfo info;
-        const json &sat_data = it.value();
-
-        info.quality = sat_data.value("quality", 1.0);
-        info.trust_level = sat_data.value("trust_level", "trusted");
-
-        if (sat_data.contains("details"))
-        {
-            const json &details = sat_data["details"];
-            info.q_transformer = details.value("transformer", 1.0);
-            info.q_graph = details.value("graph", 1.0);
-            info.q_temporal = details.value("temporal", 1.0);
-        }
-
-        if (sat_data.contains("flags"))
-        {
-            info.flags = sat_data["flags"].get<std::vector<std::string>>();
-        }
-
-        int sat_id = sat_data.value("sat_id", 0);
-        if (sat_id > 0)
-        {
-            result[sat_id] = info;
-        }
-    }
-
-    return result;
+    return cache.recent_epochs.back().scores;
 }
 
 } // namespace transformer_bridge

@@ -42,6 +42,7 @@ public:
     std::map<int,double> sat_const_residual_l1,sat_const_residual_l2; // 预拟合残差基线（按卫星维护）
 
     int MaxTRFactorNum = 100;   // TR因子数量上限，动态调整以控制优化时间
+    int MinTRFactorNum = 20;    // TR因子数量下限，避免约束过弱
     int TRFactorCount;          // 统计优化规模
 
     bool SAME_RELIABLE = false;
@@ -134,6 +135,11 @@ public:
         // ROS_INFO("CURRENT TIME: %f  ---- LATEST ONS TIME: %f", iter->first, time_frame_now);
         
         ObservationCheck();
+
+        // for(const auto& p : sat_lock_count_l1) { 
+        //     printf("[TR DEBUG] sat=%d L1_lock=%d L2_lock=%d\n", 
+        //            p.first, p.second, sat_lock_count_l2[p.first]); 
+        // }
 
         //遍历窗口，挑选候选TR因子
         auto curr_iter = iter;
@@ -328,15 +334,16 @@ public:
 
     void resizeMaxTRFactorNum(double run_time,double max_running_time_ms)
     {
+        const int min_tr = std::max(10, MinTRFactorNum);
         if(run_time < 10.0)
         {
             MaxTRFactorNum = 100;
             return; // 优化时间在可接受范围内，无需调整
         }
         MaxTRFactorNum = (MaxTRFactorNum / (run_time / max_running_time_ms)); // 如果优化时间过长，减少TR因子数量上限
-        if (MaxTRFactorNum < 10)
+        if (MaxTRFactorNum < min_tr)
         {
-            MaxTRFactorNum = 10;
+            MaxTRFactorNum = min_tr;
         }
         printf("Adjusted MaxTRNum : %d. \n", MaxTRFactorNum);
     }
@@ -431,7 +438,7 @@ public:
     // for single freq check
     bool cycleSlipDetect(int sat_id, int freq)
     {
-        auto mark_slip = [this, sat_id, freq]() {
+        auto mark_slip = [this, sat_id, freq](int reason) {
             if(freq == 1)
             {
                 sat_lock_count_l1[sat_id] = 0;
@@ -446,13 +453,12 @@ public:
                 sat_cp_const_l2.erase(sat_id);
                 sat_const_residual_l2.erase(sat_id);
             }
-            
+            ROS_INFO("SAT: %d [%d] --- SLIP REASON: %d",sat_id, freq, reason);
         };
 
         if (gnss_raw_map.size() < 2 || measSize < 2)
         {
-            mark_slip();
-            // ROS_INFO("SLIP REASON 1");
+            mark_slip(1);
             return true;
         }
 
@@ -467,7 +473,7 @@ public:
         if (!prev_obs || !curr_obs)
         {
             // 没有该卫星的观测
-            mark_slip();
+            mark_slip(2);
             return true;
         }
 
@@ -477,7 +483,7 @@ public:
             !getValidCarrierPhase(curr_obs, curr_cp_cycle,freq))
         {
             // 载波相位、观测值异常
-            mark_slip();
+            mark_slip(3);
             return true;
         }
 
@@ -485,9 +491,9 @@ public:
         const double curr_time_sec = curr_obs->time.time + curr_obs->time.sec;
         const double dt = curr_time_sec - prev_time_sec;
         if (!std::isfinite(dt) || dt <= 0.0)
-        {
+        {  
             // 时间顺序错误
-            mark_slip();
+            mark_slip(4);
             return true;
         }
        
@@ -496,7 +502,7 @@ public:
         if (prev_sv_it == sv_info_window_map.end() || curr_sv_it == sv_info_window_map.end())
         {
             // 没有最新的卫星星历
-            mark_slip();
+            mark_slip(5);
             return true;
         }
 
@@ -505,7 +511,7 @@ public:
         if (prev_sat_it == prev_sv_it->second.end() || curr_sat_it == curr_sv_it->second.end())
         {
             // 没有该卫星星历
-            mark_slip();
+            mark_slip(6);
             return true;
         }
 
@@ -528,7 +534,7 @@ public:
         if (!std::isfinite(curr_lambda) || curr_lambda <= 0.0 || !std::isfinite(prev_lambda) || prev_lambda <= 0.0 || prev_lambda != curr_lambda)
         {
             // 卫星波长无效
-            mark_slip();
+            mark_slip(7);
             return true;
         }
 
@@ -563,7 +569,7 @@ public:
             prev_los.norm() <= 0.0 || curr_los.norm() <= 0.0)
         {
             // 卫地距离异常
-            mark_slip();
+            mark_slip(8);
             return true;
         }
 
@@ -585,12 +591,11 @@ public:
         // double sat_cp_const = (freq==1) ? sat_cp_const_l1[sat_id] : ((freq==2) ? sat_cp_const_l2[sat_id] : 0.0)
 
         const double delta_cp_obs = (curr_cp_cycle - prev_cp_cycle) - sat_cp_const[sat_id];
-        // printf(" | obs delta cp: %f \n",(curr_cp_cycle - prev_cp_cycle));
         
         constexpr double kCycleSlipThresholdCycle = 1.0; // 预测和观测的载波相位变化超过1周期则判定为可能发生了周跳
         if(std::abs(delta_cp_obs - delta_cp_pred) > kCycleSlipThresholdCycle)
         {
-            mark_slip();
+            mark_slip(9);
             // ROS_INFO("SLIP REASON 10");
             ROS_INFO("Satellite %d: Delta CP Pred=%.3f cycles, Delta CP Obs=%.3f cycles", sat_id, delta_cp_pred, delta_cp_obs);
             return true;

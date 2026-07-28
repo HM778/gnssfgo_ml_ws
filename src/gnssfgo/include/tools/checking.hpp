@@ -35,6 +35,12 @@ bool getValidCarrierPhase(const gnss_comm::ObsPtr& obs, double& cp_cycle, int fr
     
     if (freq_idx >= 0 && freq_idx < static_cast<int>(obs->cp.size()))
     {
+        if (freq_idx >= static_cast<int>(obs->status.size()) ||
+            freq_idx >= static_cast<int>(obs->LLI.size()))
+        {
+            return false;
+        }
+
         cp_cycle = obs->cp[freq_idx];
         if(obs->cp[freq_idx] < 10.0)
         {
@@ -42,8 +48,9 @@ bool getValidCarrierPhase(const gnss_comm::ObsPtr& obs, double& cp_cycle, int fr
             return false;
         }
 
-        if((obs->status[freq_idx] & 0x2u != 0u) || (obs->LLI[freq_idx] != 0u))
+        if ((obs->status[freq_idx] & 0x2u) == 0u || obs->LLI[freq_idx] != 0u)
         {
+
             // 信号显式的异常指标检查
             return false;
         }

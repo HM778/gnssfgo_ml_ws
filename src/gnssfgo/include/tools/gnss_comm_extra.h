@@ -152,11 +152,11 @@ namespace gnss_comm_extra{
         corrected_measurements.reserve( 2* matched_obs.size());
 
         // 遍历同时具有观测和星历的卫星观测
-        for (size_t i = 0; i < matched_obs.size(); ++i)
+        for (size_t sat_i = 0; sat_i < matched_obs.size(); ++sat_i)
         {
             CorrectedPseudorangeMeasurement measurement;
-            const auto &single_obs = matched_obs[i];
-            const auto &sat_state = sat_states[i];
+            const auto &single_obs = matched_obs[sat_i];
+            const auto &sat_state = sat_states[sat_i];
             if (!single_obs || !sat_state)
             {
                 continue;
@@ -165,10 +165,10 @@ namespace gnss_comm_extra{
             // 双频段观测可用性检查
             int freq_idx_l1 = -1,freq_idx_l2=-1;
             bool valid_l1 = true, valid_l2 = true;
-            
+
             gnss_comm::L1_freq(single_obs,&freq_idx_l1);
             gnss_comm::L2_freq(single_obs,&freq_idx_l2);
-            
+
             if (freq_idx_l1 < 0 || freq_idx_l1 >= static_cast<int>(single_obs->psr.size()) || single_obs->psr[freq_idx_l1] <= 0.0)
             {
                 valid_l1 = false;
@@ -187,22 +187,33 @@ namespace gnss_comm_extra{
                 continue;
             }
 
-            for( int i = 0;i<2; i++)
+            // 这些数组按卫星索引，使用外层 sat_i
+            const double elevation_rad = (sat_i < all_sv_azel.size()) ? all_sv_azel[sat_i](1) : M_PI / 2.0;
+            const double ion_delay_m = (sat_i < atmos_delay.size()) ? atmos_delay[sat_i](0) : 0.0;
+            const double tro_delay_m = (sat_i < atmos_delay.size()) ? atmos_delay[sat_i](1) : 0.0;
+            const auto &matched_ephem = matched_ephems[sat_i];
+
+            for (int freq_i = 0; freq_i < 2; ++freq_i)
             {
                 int freq_idx = -1;
-                if(i == 0 && valid_l1)
+                if (freq_i == 0 && valid_l1)
                 {
                     freq_idx = freq_idx_l1;
                     measurement.freq = 1;
                 }
-                else if( i == 1 && valid_l2)
+                else if (freq_i == 1 && valid_l2)
                 {
                     freq_idx = freq_idx_l2;
                     measurement.freq = 2;
                 }
-                
-                const double elevation_rad = (i < all_sv_azel.size()) ? all_sv_azel[i](1) : M_PI / 2.0;
-                const double weight = computePseudorangeWeight(single_obs, matched_ephems[i], elevation_rad, freq_idx);
+
+                // 单频段无效时直接跳过，避免 freq_idx = -1 导致 psr[-1] UB
+                if (freq_idx < 0)
+                {
+                    continue;
+                }
+
+                const double weight = computePseudorangeWeight(single_obs, matched_ephem, elevation_rad, freq_idx);
                 if (weight <= 0.0)
                 {
                     continue;
@@ -219,8 +230,8 @@ namespace gnss_comm_extra{
                 measurement.sigma = std::sqrt(1.0 / weight);
                 measurement.sv_dt_sec = sat_state->dt;
                 measurement.tgd_sec = sat_state->tgd;
-                measurement.ion_delay_m = (i < atmos_delay.size()) ? atmos_delay[i](0) : 0.0;
-                measurement.tro_delay_m = (i < atmos_delay.size()) ? atmos_delay[i](1) : 0.0;
+                measurement.ion_delay_m = ion_delay_m;
+                measurement.tro_delay_m = tro_delay_m;
                 measurement.elevation_rad = elevation_rad;
                 measurement.valid = true;
                 measurement.psr_std = single_obs->psr_std[freq_idx] <= 0.0 ? 3.0 : single_obs->psr_std[freq_idx];

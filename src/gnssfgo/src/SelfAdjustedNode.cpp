@@ -5,6 +5,7 @@
 #include "../include/tools/transformer_bridge.hpp"
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <mutex>
 
@@ -20,6 +21,8 @@ class SelfAdjustedTR : public ProcessingNodeExtra
     double last_ingested_time_frame = -1.0;
     std::map<int, sv_info> last_sv_info_map;
     double max_running_time_ms;
+    int max_psr_factors_per_epoch = 24;
+    int min_tr_factor_num = 20;
     double min_output_dt = 0.0;
     bool SAME_RELIABLE,SAME_TIME_WEIGHT;
     double last_output_time_sec = -1.0;
@@ -49,6 +52,8 @@ public:
         // params setting
         loadParams();
         nh.param<double>("max_running_time_ms",max_running_time_ms,50.0);
+        nh.param<int>("max_psr_factors_per_epoch", max_psr_factors_per_epoch, 24);
+        nh.param<int>("min_tr_factor_num", min_tr_factor_num, 20);
 
         nh.param<bool>("same_time_weight", SAME_TIME_WEIGHT, false);
         nh.param<bool>("same_reliable", SAME_RELIABLE, false);
@@ -77,6 +82,8 @@ public:
         factor_graph.MARGINAL_ENABLE = marginal_enable;
         factor_graph.SAME_RELIABLE = SAME_RELIABLE;
         factor_graph.SAME_TIME_WEIGHT = SAME_TIME_WEIGHT;
+        factor_graph.max_psr_factors_per_epoch_ = std::max(4, max_psr_factors_per_epoch);
+        factor_graph.MinTRFactorNum = std::max(10, min_tr_factor_num);
         
         InitialSubTopics();
         InitialPubTopics();

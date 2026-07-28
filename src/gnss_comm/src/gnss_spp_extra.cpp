@@ -180,6 +180,7 @@ namespace gnss_comm
 
             const SatStatePtr &sat_state = all_sv_states[i];
             uint32_t this_sys = satsys(sat_state->sat_id, NULL);
+            if (this_sys == 0)   continue;
             Eigen::Vector3d sv_pos = sat_state->pos;
 
             // compute atmospheric delays
@@ -201,6 +202,7 @@ namespace gnss_comm
             double sagnac_term = EARTH_OMG_GPS*(sv_pos(0)*rcv_state(1,0)-
                 sv_pos(1)*rcv_state(0,0))/LIGHT_SPEED;
             // estimated pseudorange = geometric range + sagnac + receiver clock - satellite clock + troposphere + ionosphere + TGD
+
             double psr_estimated = rv2sv.norm() + sagnac_term + rcv_state(3+sys2idx.at(this_sys)) -
                 sat_state->dt*LIGHT_SPEED + tro_delay + ion_delay + sat_state->tgd*LIGHT_SPEED;
 
