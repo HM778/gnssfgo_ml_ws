@@ -1,4 +1,0 @@
-[ 50%] [32m[1mLinking CXX executable /home/nvidia/Work/gnssfgo_ml_ws/devel/.private/gnssfgo/lib/gnssfgo/ground_truth_node[0m
-[ 50%] [32m[1mLinking CXX executable /home/nvidia/Work/gnssfgo_ml_ws/devel/.private/gnssfgo/lib/gnssfgo/SANode[0m
-[ 75%] Built target ground_truth_node
-[100%] Built target SANode
