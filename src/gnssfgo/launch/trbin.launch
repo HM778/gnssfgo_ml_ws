@@ -1,6 +1,6 @@
 <launch>
     <arg name="binddcp_terminal_prefix" default="x-terminal-emulator -T binddcp -e" />
-    <arg name="osqa_enabled" default="false" />
+    <arg name="osqa_enabled" default="true" />
 
     <node name="SANode" pkg="gnssfgo" type="SANode" output="screen" launch-prefix="$(arg binddcp_terminal_prefix)">
         <param name="hotstart_enable" value="false" />
