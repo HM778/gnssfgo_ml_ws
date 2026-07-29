@@ -11,6 +11,7 @@
 #include <gnss_comm/GnssGloEphemMsg.h>
 #include <gnss_comm/gnss_utility.hpp>
 #include <gnss_comm/gnss_spp.hpp>
+#include <gnss_comm/gnss_spp_extra.hpp>
 #include <gnss_comm/gnss_constant.hpp>
 
 #include <cmath>
@@ -24,16 +25,9 @@ using namespace Eigen;
 
 #define use_fixed_cov_ar 1
 namespace gnss_comm_extra{
-
-    // Eigen::Matrix<double, 7, 1> psr_pos_extra(const std::vector<ObsPtr> &obs, 
-    //     const std::vector<EphemBasePtr> &ephems, const std::vector<GloEphemPtr> &gephems, const std::vector<double> &iono_params)
-    // {
-        
-    // }
-
-
     struct CorrectedPseudorangeMeasurement
     {
+        int freq = -1;
         int sat = 0;
         std::string sat_sys;
         Eigen::Vector3d sat_pos = Eigen::Vector3d::Zero();
@@ -79,14 +73,27 @@ namespace gnss_comm_extra{
     inline double computePseudorangeWeight(const gnss_comm::ObsPtr &obs,
                                            const gnss_comm::EphemBasePtr &ephem_base,
                                            double /*elevation_rad*/,
-                                           int l1_idx)
+                                           int freq)
     {
         double weight = 1.0;
-        if (obs && l1_idx >= 0 && l1_idx < static_cast<int>(obs->psr_std.size()) && obs->psr_std[l1_idx] > 0.0)
+        if(freq == 1)
         {
-            weight /= (obs->psr_std[l1_idx] / 0.16);
+            int l1_idx;
+            gnss_comm::L1_freq(obs,&l1_idx);
+            if (obs && l1_idx >= 0 && l1_idx < static_cast<int>(obs->psr_std.size()) && obs->psr_std[l1_idx] > 0.0)
+            {
+                weight /= (obs->psr_std[l1_idx] / 0.16);
+            }
         }
-
+        else if(freq == 2)
+        {
+            int l2_idx;
+            gnss_comm::L2_freq(obs,&l2_idx);
+            if (obs && l2_idx >= 0 && l2_idx < static_cast<int>(obs->psr_std.size()) && obs->psr_std[l2_idx] > 0.0)
+            {
+                weight /= (obs->psr_std[l2_idx] / 0.16);
+            }
+        }
         const int obs_sys = obs ? gnss_comm::satsys(obs->sat, NULL) : SYS_NONE;
         if (gnss_comm::EphemPtr ephem = std::dynamic_pointer_cast<gnss_comm::Ephem>(ephem_base))
         {
@@ -139,193 +146,104 @@ namespace gnss_comm_extra{
         std::vector<Eigen::Vector2d> all_sv_azel;
         // saastamoninen model for tropospheric delay, 
         // klobuchar model for ionospheric delay, 
-        gnss_comm::psr_res(receiver_state, matched_obs, sat_states, iono_params, residuals, jacobian, atmos_delay, all_sv_azel);
+        gnss_comm::psr_res_extra(receiver_state, matched_obs, sat_states, iono_params, residuals, jacobian, atmos_delay, all_sv_azel);
 
-        corrected_measurements.reserve(matched_obs.size());
-        for (size_t i = 0; i < matched_obs.size(); ++i)
+        // 预留 L1/L2 频段
+        corrected_measurements.reserve( 2* matched_obs.size());
+
+        // 遍历同时具有观测和星历的卫星观测
+        for (size_t sat_i = 0; sat_i < matched_obs.size(); ++sat_i)
         {
             CorrectedPseudorangeMeasurement measurement;
-            const auto &single_obs = matched_obs[i];
-            const auto &sat_state = sat_states[i];
+            const auto &single_obs = matched_obs[sat_i];
+            const auto &sat_state = sat_states[sat_i];
             if (!single_obs || !sat_state)
             {
-                corrected_measurements.push_back(measurement);
                 continue;
             }
 
-            int freq_idx = -1;
-            double lamda_dummy = 0.0, lamda_l2_dummy = 0.0;
-            getFreqIndex(single_obs, freq_sel, freq_idx, lamda_dummy, lamda_l2_dummy);
-            if (freq_idx < 0 || freq_idx >= static_cast<int>(single_obs->psr.size()) || single_obs->psr[freq_idx] <= 0.0)
+            // 双频段观测可用性检查
+            int freq_idx_l1 = -1,freq_idx_l2=-1;
+            bool valid_l1 = true, valid_l2 = true;
+
+            gnss_comm::L1_freq(single_obs,&freq_idx_l1);
+            gnss_comm::L2_freq(single_obs,&freq_idx_l2);
+
+            if (freq_idx_l1 < 0 || freq_idx_l1 >= static_cast<int>(single_obs->psr.size()) || single_obs->psr[freq_idx_l1] <= 0.0)
             {
-                corrected_measurements.push_back(measurement);
+                valid_l1 = false;
+            }
+            if (freq_idx_l2 < 0 || freq_idx_l2 >= static_cast<int>(single_obs->psr.size()) || single_obs->psr[freq_idx_l2] <= 0.0)
+            {
+                valid_l2 = false;
+            }
+            if( !valid_l2 && !valid_l1)
+            {
                 continue;
             }
 
             if (!std::isfinite(sat_state->pos.x()) || !std::isfinite(sat_state->pos.y()) || !std::isfinite(sat_state->pos.z()))
             {
+                continue;
+            }
+
+            // 这些数组按卫星索引，使用外层 sat_i
+            const double elevation_rad = (sat_i < all_sv_azel.size()) ? all_sv_azel[sat_i](1) : M_PI / 2.0;
+            const double ion_delay_m = (sat_i < atmos_delay.size()) ? atmos_delay[sat_i](0) : 0.0;
+            const double tro_delay_m = (sat_i < atmos_delay.size()) ? atmos_delay[sat_i](1) : 0.0;
+            const auto &matched_ephem = matched_ephems[sat_i];
+
+            for (int freq_i = 0; freq_i < 2; ++freq_i)
+            {
+                int freq_idx = -1;
+                if (freq_i == 0 && valid_l1)
+                {
+                    freq_idx = freq_idx_l1;
+                    measurement.freq = 1;
+                }
+                else if (freq_i == 1 && valid_l2)
+                {
+                    freq_idx = freq_idx_l2;
+                    measurement.freq = 2;
+                }
+
+                // 单频段无效时直接跳过，避免 freq_idx = -1 导致 psr[-1] UB
+                if (freq_idx < 0)
+                {
+                    continue;
+                }
+
+                const double weight = computePseudorangeWeight(single_obs, matched_ephem, elevation_rad, freq_idx);
+                if (weight <= 0.0)
+                {
+                    continue;
+                }
+
+                const int obs_sys = gnss_comm::satsys(single_obs->sat, NULL);
+                measurement.sat = static_cast<int>(single_obs->sat);
+                measurement.sat_sys = (obs_sys == SYS_GPS) ? "GPS" :
+                                    ((obs_sys == SYS_GLO) ? "GLONASS" :
+                                    ((obs_sys == SYS_GAL) ? "Galileo" :
+                                    ((obs_sys == SYS_BDS) ? "BeiDou" : "Unknown")));
+                measurement.sat_pos = sat_state->pos;
+                measurement.pseudorange = single_obs->psr[freq_idx];
+                measurement.sigma = std::sqrt(1.0 / weight);
+                measurement.sv_dt_sec = sat_state->dt;
+                measurement.tgd_sec = sat_state->tgd;
+                measurement.ion_delay_m = ion_delay_m;
+                measurement.tro_delay_m = tro_delay_m;
+                measurement.elevation_rad = elevation_rad;
+                measurement.valid = true;
+                measurement.psr_std = single_obs->psr_std[freq_idx] <= 0.0 ? 3.0 : single_obs->psr_std[freq_idx];
                 corrected_measurements.push_back(measurement);
-                continue;
             }
-
-            const double elevation_rad = (i < all_sv_azel.size()) ? all_sv_azel[i](1) : M_PI / 2.0;
-            const double weight = computePseudorangeWeight(single_obs, matched_ephems[i], elevation_rad, freq_idx);
-            if (weight <= 0.0)
-            {
-                continue;
-            }
-
-            const int obs_sys = gnss_comm::satsys(single_obs->sat, NULL);
-            measurement.sat = static_cast<int>(single_obs->sat);
-            measurement.sat_sys = (obs_sys == SYS_GPS) ? "GPS" :
-                                  ((obs_sys == SYS_GLO) ? "GLONASS" :
-                                  ((obs_sys == SYS_GAL) ? "Galileo" :
-                                  ((obs_sys == SYS_BDS) ? "BeiDou" : "Unknown")));
-            measurement.sat_pos = sat_state->pos;
-            measurement.pseudorange = single_obs->psr[freq_idx];
-            measurement.sigma = std::sqrt(1.0 / weight);
-            measurement.sv_dt_sec = sat_state->dt;
-            measurement.tgd_sec = sat_state->tgd;
-            measurement.ion_delay_m = (i < atmos_delay.size()) ? atmos_delay[i](0) : 0.0;
-            measurement.tro_delay_m = (i < atmos_delay.size()) ? atmos_delay[i](1) : 0.0;
-            measurement.elevation_rad = elevation_rad;
-            measurement.valid = true;
-            measurement.psr_std = single_obs->psr_std[freq_idx] <= 0.0 ? 3.0 : single_obs->psr_std[freq_idx];
-            corrected_measurements.push_back(measurement);
         }
 
         return corrected_measurements;
     }
 
-    // Build IF pseudorange measurements from dual-frequency observations.
-    // Uses ionosphere-free combination to eliminate first-order ionospheric delay.
-    // Falls back to L1 for single-frequency satellites.
-    inline std::vector<CorrectedPseudorangeMeasurement> buildIFPseudorangeMeasurements(
-        const std::vector<gnss_comm::ObsPtr> &obs,
-        const std::vector<gnss_comm::EphemBasePtr> &ephems,
-        const Eigen::Vector3d &state_guess,
-        bool has_state_guess)
-    {
-        std::vector<CorrectedPseudorangeMeasurement> corrected_measurements;
 
-        std::vector<gnss_comm::ObsPtr> matched_obs;
-        std::vector<gnss_comm::EphemBasePtr> matched_ephems;
-        matchObsAndEphems(obs, ephems, matched_obs, matched_ephems);
-        if (matched_obs.size() < 4 || matched_ephems.size() != matched_obs.size())
-            return corrected_measurements;
-
-        const std::vector<gnss_comm::SatStatePtr> sat_states = gnss_comm::sat_states(matched_obs, matched_ephems);
-        if (sat_states.size() != matched_obs.size())
-            return corrected_measurements;
-
-        Eigen::Matrix<double, 7, 1> receiver_state = Eigen::Matrix<double, 7, 1>::Zero();
-        if (has_state_guess) receiver_state.head<3>() = state_guess;
-
-        Eigen::VectorXd residuals;
-        Eigen::MatrixXd jacobian;
-        std::vector<Eigen::Vector2d> atmos_delay;
-        std::vector<Eigen::Vector2d> all_sv_azel;
-        const std::vector<double> zero_iono(8, 0.0);
-        gnss_comm::psr_res(receiver_state, matched_obs, sat_states, zero_iono, residuals, jacobian, atmos_delay, all_sv_azel);
-
-        corrected_measurements.reserve(matched_obs.size());
-        for (size_t i = 0; i < matched_obs.size(); ++i)
-        {
-            CorrectedPseudorangeMeasurement measurement;
-            const auto &single_obs = matched_obs[i];
-            const auto &sat_state = sat_states[i];
-            if (!single_obs || !sat_state) { corrected_measurements.push_back(measurement); continue; }
-            if (!std::isfinite(sat_state->pos.x()) || !std::isfinite(sat_state->pos.y()) || !std::isfinite(sat_state->pos.z()))
-            { corrected_measurements.push_back(measurement); continue; }
-
-            // Try IF combination first
-            const double if_psr = getIFPseudorange(single_obs);
-            double psr_val = 0.0, psr_sigma = 3.0;
-            int use_freq_idx = -1;
-            bool use_if = false;
-
-            if (if_psr > 0.0)
-            {
-                // IF combination available — use it (iono-free, but noise amplified ~3x)
-                use_if = true;
-                psr_val = if_psr;
-                psr_sigma = getIFPsrStd(single_obs);
-                int l1 = -1; gnss_comm::L1_freq(single_obs, &l1);
-                use_freq_idx = l1;
-            }
-            else
-            {
-                // Fall back to L1 only
-                int l1 = -1; gnss_comm::L1_freq(single_obs, &l1);
-                if (l1 < 0 || l1 >= (int)single_obs->psr.size() || single_obs->psr[l1] <= 0.0)
-                { corrected_measurements.push_back(measurement); continue; }
-                use_freq_idx = l1;
-                psr_val = single_obs->psr[l1];
-                psr_sigma = (l1 < (int)single_obs->psr_std.size() && single_obs->psr_std[l1] > 0.0)
-                             ? single_obs->psr_std[l1] : 3.0;
-            }
-
-            const double elevation_rad = (i < all_sv_azel.size()) ? all_sv_azel[i](1) : M_PI / 2.0;
-            const double weight = computePseudorangeWeight(single_obs, matched_ephems[i], elevation_rad, use_freq_idx);
-            if (weight <= 0.0) continue;
-
-            const int obs_sys = gnss_comm::satsys(single_obs->sat, NULL);
-            measurement.sat = static_cast<int>(single_obs->sat);
-            measurement.sat_sys = (obs_sys == SYS_GPS) ? "GPS" :
-                                  ((obs_sys == SYS_GLO) ? "GLONASS" :
-                                  ((obs_sys == SYS_GAL) ? "Galileo" :
-                                  ((obs_sys == SYS_BDS) ? "BeiDou" : "Unknown")));
-            measurement.sat_pos = sat_state->pos;
-            measurement.pseudorange = psr_val;
-            measurement.sigma = psr_sigma;
-            measurement.sv_dt_sec = sat_state->dt;
-            measurement.tgd_sec = sat_state->tgd;
-            // IF eliminates ionospheric delay; L1-only still applies Klobuchar
-            measurement.ion_delay_m = use_if ? 0.0 : ((i < atmos_delay.size()) ? atmos_delay[i](0) : 0.0);
-            measurement.tro_delay_m = (i < atmos_delay.size()) ? atmos_delay[i](1) : 0.0;
-            measurement.elevation_rad = elevation_rad;
-            measurement.valid = true;
-            measurement.psr_std = psr_sigma;
-            corrected_measurements.push_back(measurement);
-        }
-
-        return corrected_measurements;
-    }
-
-    double getMSE(Eigen::MatrixXd est, Eigen::MatrixXd refSat, std::string format)
-    {
-    double MSE = 0;
-    if(format=="2D_Error")
-    {
-        MSE = sqrt(pow((est(0) - refSat(0)),2) + pow((est(1) - refSat(1)),2));
-        return MSE;
-    }
-    if(format=="3D_Error")
-    {
-        MSE = sqrt(pow((est(0) - refSat(0)),2) + pow((est(1) - refSat(1)),2) + pow((est(2) - refSat(2)),2));
-        return MSE;
-    }
-
-    return std::numeric_limits<double>::quiet_NaN();
-    }
-
-    Eigen::Vector3d getXYZ_error(Eigen::MatrixXd est, Eigen::MatrixXd refSat, std::string format)
-    {
-    Eigen::Vector3d xyz_error;
-    if(format=="xyz_Error")
-    {
-        xyz_error(0) = est(0) - refSat(0);
-        xyz_error(1) = est(1) - refSat(1);
-        xyz_error(2) = est(2) - refSat(2);
-        return xyz_error;
-    }
-    else 
-        return xyz_error;
-    }
-
-
-
-    double getDistanceFrom2Points(Eigen::Vector3d p1, Eigen::Vector3d p2)
+    double getDistance(Eigen::Vector3d p1, Eigen::Vector3d p2)
     {
         double xMod = pow((p1.x() - p2.x()), 2);
         double yMod = pow((p1.y() - p2.y()), 2);
@@ -334,178 +252,21 @@ namespace gnss_comm_extra{
         return mod;
     }
 
-    /* get variance for carrier-phase from a single satellite based on elevation */
-    double getVarofCp(double ele)
-    {
-        double a = 0.01; 
-        double b = 0.01;
-        double c = 0;
-        double d = 0;
-        double square_sigma = pow(a,2) + pow(b,2) / pow(sin(ele * D2R), 2) + pow(c,2) + pow(d,2);
-        // return 0.004;
-        return square_sigma;
-    }
-
     
-    /* get variance for pseudorange from a single satellite based on elevation */
-    double getVarofPr(double ele)
-    {
-        double p_c_ratio = 1; // 10
-        double a = 3 * p_c_ratio; 
-        double b = 3 * p_c_ratio;
-        double c = 0;
-        double d = 0;
-        double square_sigma = pow(a,2) + pow(b,2) / pow(sin(ele * D2R), 2) + pow(c,2) + pow(d,2);
-        // return 0.4;
-        // std::cout<<"var of pseudorange -> "<<var<<std::endl;
-        return square_sigma;
-    }
-
-    /* get pseudorange double-differenced Jacobian matrix */
-    void getPrDDJacobian(std::map<int,sv_info> sv_info_map,Eigen::Vector3d u_pose, Eigen::Vector3d base_pose, DDMeasurement dd_measurement, Eigen::MatrixXd& jacobian_matrix, int jac_row,Eigen::MatrixXd& weighting_matrix)
-    {
-        Eigen::Vector3d pose_r = base_pose;
-
-        /* satellite position*/
-        int u_m_sat = dd_measurement.u_master_SV->sat;
-        Eigen::Vector3d u_pose_m(sv_info_map[u_m_sat].pos[0], sv_info_map[u_m_sat].pos[1], sv_info_map[u_m_sat].pos[2]);
-        double var_u2m = getVarofCp(sv_info_map[u_m_sat].elevation);
-
-        int u_i_sat = dd_measurement.u_iSV->sat;
-        Eigen::Vector3d u_pose_i(sv_info_map[u_i_sat].pos[0], sv_info_map[u_i_sat].pos[1], sv_info_map[u_i_sat].pos[2]); 
-        double var_u2i = getVarofCp(sv_info_map[u_i_sat].elevation);
-
-        int r_m_sat = dd_measurement.r_master_SV->sat;
-        Eigen::Vector3d r_pose_m(sv_info_map[r_m_sat].pos[0], sv_info_map[r_m_sat].pos[1], sv_info_map[r_m_sat].pos[2]);
-        double var_r2m = getVarofCp(sv_info_map[r_m_sat].elevation);
-
-        int r_i_sat = dd_measurement.r_iSV->sat;
-        Eigen::Vector3d r_pose_i(sv_info_map[r_i_sat].pos[0], sv_info_map[r_i_sat].pos[1], sv_info_map[r_i_sat].pos[2]); 
-        double var_r2i = getVarofCp(sv_info_map[r_i_sat].elevation);
-
-        double est_p_r2m = getDistanceFrom2Points(pose_r, r_pose_m);
-        est_p_r2m = est_p_r2m + OMGE_ * (r_pose_m(0)*pose_r(1)-r_pose_m(1)*pose_r(0))/CLIGHT_;
-
-        double est_p_r2i = getDistanceFrom2Points(pose_r, r_pose_i);
-        est_p_r2i = est_p_r2i + OMGE_ * (r_pose_i(0)*pose_r(1)-r_pose_i(1)*pose_r(0))/CLIGHT_;
-
-        double est_p_u2m = getDistanceFrom2Points(u_pose, u_pose_m);
-        est_p_u2m = est_p_u2m + OMGE_ * (u_pose_m(0)*u_pose(1)-u_pose_m(1)*u_pose(0))/CLIGHT_;
-        
-
-        double est_p_u2i = getDistanceFrom2Points(u_pose, u_pose_i);
-        est_p_u2i = est_p_u2i + OMGE_ * (u_pose_i(0)*u_pose(1)-u_pose_i(1)*u_pose(0))/CLIGHT_;
-
-        // jacobian_matrix(jac_row, 0) = (u_pose_i(0) - u_pose(0))/(est_p_u2i) - (u_pose_m(0) - u_pose(0))/est_p_u2m;
-
-        // jacobian_matrix(jac_row, 1) = (u_pose_i(1) - u_pose(1))/(est_p_u2i) - (u_pose_m(1) - u_pose(1))/est_p_u2m;
-
-        // jacobian_matrix(jac_row, 2) = (u_pose_i(2) - u_pose(2))/(est_p_u2i) - (u_pose_m(2) - u_pose(2))/est_p_u2m;
-
-        double factor = 1;
-        jacobian_matrix(jac_row, 0) = factor * ((u_pose_i(0) - u_pose(0))/(est_p_u2i) - (u_pose_m(0) - u_pose(0))/est_p_u2m);
-
-        jacobian_matrix(jac_row, 1) = factor * ((u_pose_i(1) - u_pose(1))/(est_p_u2i) - (u_pose_m(1) - u_pose(1))/est_p_u2m);
-
-        jacobian_matrix(jac_row, 2) = factor * ((u_pose_i(2) - u_pose(2))/(est_p_u2i) - (u_pose_m(2) - u_pose(2))/est_p_u2m);
-
-        for(int i = 3; i < jacobian_matrix.cols(); i++)
-        {
-        jacobian_matrix(jac_row, i) = 0;
-        }
-        
-        #if use_fixed_cov_ar
-        weighting_matrix(jac_row,jac_row) = 1.0 / (pow(0.4, 2));
-        #else
-        weighting_matrix(jac_row,jac_row) = 1.0 / ((var_u2m + var_u2i + var_r2m + var_r2i)/4.0); 
-        #endif 
-
-    }
-
-    /* get carrier-phase double-differenced Jacobian matrix */
-    void getCpDDJacobian(std::map<int,sv_info> sv_info_map, Eigen::Vector3d u_pose, Eigen::Vector3d base_pose, DDMeasurement dd_measurement, Eigen::MatrixXd& jacobian_matrix, int jac_row, int carrier_phase_index, Eigen::MatrixXd& weighting_matrix)
-    {
-        Eigen::Vector3d pose_r = base_pose;
-
-        /* satellite position*/
-        int u_m_sat = dd_measurement.u_master_SV->sat;
-        Eigen::Vector3d u_pose_m(sv_info_map[u_m_sat].pos[0], sv_info_map[u_m_sat].pos[1], sv_info_map[u_m_sat].pos[2]);
-        double var_u2m = getVarofCp(sv_info_map[u_m_sat].elevation);
-
-        int u_i_sat = dd_measurement.u_iSV->sat;
-        Eigen::Vector3d u_pose_i(sv_info_map[u_i_sat].pos[0], sv_info_map[u_i_sat].pos[1], sv_info_map[u_i_sat].pos[2]); 
-        double var_u2i = getVarofCp(sv_info_map[u_i_sat].elevation);
-
-        int r_m_sat = dd_measurement.r_master_SV->sat;
-        Eigen::Vector3d r_pose_m(sv_info_map[r_m_sat].pos[0], sv_info_map[r_m_sat].pos[1], sv_info_map[r_m_sat].pos[2]);
-        double var_r2m = getVarofCp(sv_info_map[r_m_sat].elevation);
-
-        int r_i_sat = dd_measurement.r_iSV->sat;
-        Eigen::Vector3d r_pose_i(sv_info_map[r_i_sat].pos[0], sv_info_map[r_i_sat].pos[1], sv_info_map[r_i_sat].pos[2]); 
-        double var_r2i = getVarofCp(sv_info_map[r_i_sat].elevation);
-        // double est_p_r2m = getDistanceFrom2Points(pose_r, r_pose_m);
-        // double est_p_r2i = getDistanceFrom2Points(pose_r, r_pose_i);
-
-        // double est_p_u2m = getDistanceFrom2Points(u_pose, u_pose_m);
-        // double est_p_u2i = getDistanceFrom2Points(u_pose, u_pose_i);
-
-        double est_p_r2m = getDistanceFrom2Points(pose_r, r_pose_m);
-        est_p_r2m = est_p_r2m + OMGE_ * (r_pose_m(0)*pose_r(1)-r_pose_m(1)*pose_r(0))/CLIGHT_;
-
-        double est_p_r2i = getDistanceFrom2Points(pose_r, r_pose_i);
-        est_p_r2i = est_p_r2i + OMGE_ * (r_pose_i(0)*pose_r(1)-r_pose_i(1)*pose_r(0))/CLIGHT_;
-
-        double est_p_u2m = getDistanceFrom2Points(u_pose, u_pose_m);
-        est_p_u2m = est_p_u2m + OMGE_ * (u_pose_m(0)*u_pose(1)-u_pose_m(1)*u_pose(0))/CLIGHT_;
-        
-
-        double est_p_u2i = getDistanceFrom2Points(u_pose, u_pose_i);
-        est_p_u2i = est_p_u2i + OMGE_ * (u_pose_i(0)*u_pose(1)-u_pose_i(1)*u_pose(0))/CLIGHT_;
-
-        double factor = 1;
-        // LOG(INFO)<<"jacobian_matrix.cols()"<<jacobian_matrix.cols();
-        // LOG(INFO)<<"jacobian_matrix.rows()"<<jacobian_matrix.rows();
-        // LOG(INFO)<< "jac_row-> "<<jac_row;
-        // LOG(INFO)<<"carrier_phase_index->" << carrier_phase_index;
-        // LOG(INFO)<<"jacobian_matrix(jac_row, 0)->" << jacobian_matrix(jac_row, 0);
-        jacobian_matrix(jac_row, 0) = factor * ((u_pose_i(0) - u_pose(0))/(est_p_u2i) - (u_pose_m(0) - u_pose(0))/est_p_u2m);
-
-        jacobian_matrix(jac_row, 1) = factor * ((u_pose_i(1) - u_pose(1))/(est_p_u2i) - (u_pose_m(1) - u_pose(1))/est_p_u2m);
-
-        jacobian_matrix(jac_row, 2) = factor * ((u_pose_i(2) - u_pose(2))/(est_p_u2i) - (u_pose_m(2) - u_pose(2))/est_p_u2m);
-
-        for(int i = 3; i < jacobian_matrix.cols(); i++)
-        {
-        jacobian_matrix(jac_row, i) = 0; 
-        }
-        
-        // jacobian_matrix(jac_row, 3 + carrier_phase_index) = dd_measurement.r_master_SV.lamda;
-        jacobian_matrix(jac_row, 3 + carrier_phase_index) = sv_info_map[r_m_sat].lamda;
-
-        // weighting_matrix(jac_row,jac_row) = 1.0/(var_u2m + var_u2i + var_r2m + var_r2i);
-        weighting_matrix(jac_row,jac_row) = 1.0/(pow(0.004, 2));
-
-        #if use_fixed_cov_ar
-        
-        weighting_matrix(jac_row,jac_row) = 1.0/(pow(0.004, 2));
-        #else
-        weighting_matrix(jac_row,jac_row) = 1.0 / ((var_u2m + var_u2i + var_r2m + var_r2i)/4.0); 
-        #endif 
-    }
 
     /* get variance for carrier-phase from a single satellite based on elevation/SNR */
+    // 无论传入L1还是L2的观测数据，它都使用同一套经验模型和相同的固定参数来计算方差。
     double getVarofCp_ele_SNR(gnss_comm::ObsPtr single_sat_data,std::map<int,sv_info> sv_info_map)
     {
         Eigen::Matrix<double,4,1> parameters;
         parameters<<50.0, 30.0, 30.0, 10.0; // loosely coupled 
-        // parameters<<50.0, 30.0, 20.0, 30.0; // loosely coupled 
         double snr_1 = parameters(0); // T = 50
         double snr_A = parameters(1); // A = 30
         double snr_a = parameters(2);// a = 30
         double snr_0 = parameters(3); // F = 10
         const double snr_R = (!single_sat_data || single_sat_data->CN0.empty())
             ? std::numeric_limits<double>::quiet_NaN()
-            : single_sat_data->CN0[0];
+            : single_sat_data->CN0[0];  //统一频段
 
         const auto it = sv_info_map.find(int(single_sat_data->sat));
         const double elR = (it == sv_info_map.end())

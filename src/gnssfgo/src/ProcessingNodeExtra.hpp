@@ -35,6 +35,7 @@
 
 #include <stdarg.h>
 #include <gnss_comm/gnss_spp.hpp>
+#include <gnss_comm/gnss_spp_extra.hpp>
 #include <gnss_comm/gnss_utility.hpp>
 #include <gnss_comm/gnss_constant.hpp>
 
@@ -106,7 +107,6 @@ public:
     // 是否启用边缘化
     bool marginal_enable = true;
 
-
     //保证时间同步
     gnss_comm::gtime_t current_sys_time;            //后处理时设置为星历时间
     double current_gpst_sec = -1.0;
@@ -124,9 +124,6 @@ public:
     ros::Publisher pub_psr_enu_latest;
     ros::Publisher pub_fgo_llh_latest;
     ros::Publisher pub_fgo_enu_latest;
-
-
-
 
     void StartSpinners()
     {
@@ -345,8 +342,9 @@ public:
 
         if (can_psr)
         {
+            std::vector<double> iono_params(8, 0.0);
             const Eigen::Matrix<double, 7, 1> psr_result =
-                gnss_comm::psr_pos_IF(meas, local_ephem_array);
+                gnss_comm::psr_pos_extra(meas, local_ephem_array,iono_params);
             pos_ecef = psr_result.head<3>();
             if (pos_ecef.norm() > 1e-3)
             {
@@ -378,7 +376,7 @@ public:
         }
 
         const Eigen::Vector4d doppler_est =
-            gnss_comm::dopp_vel_IF(meas, local_ephem_array, enu_ref_ecef);
+            gnss_comm::dopp_vel_extra(meas, local_ephem_array, enu_ref_ecef);
         const Eigen::Vector3d vel_xyz(doppler_est[0], doppler_est[1], doppler_est[2]);
 
         nav_msgs::Odometry local_dop_meas;
@@ -542,11 +540,12 @@ public:
 
     void gephem_cb(const gnss_comm::GnssGloEphemMsgConstPtr &gephem_msg)
     {
-        // Use the existing conversion helper from gnss_comm to parse GloEphem
+        if(PART_SATSYS)
+        {
+            return;
+        }
+        
         gnss_comm::GloEphemPtr ud_gephem = gnss_comm::msg2glo_ephem(gephem_msg);
-
-        // GLONASS satellite ID is already encoded by ublox_driver in RTKLIB format.
-        // Do NOT filter by PART_SATSYS here — GLO is always accepted.
 
         // --- get system time reference ---
         gnss_comm::gtime_t local_time;
@@ -621,6 +620,7 @@ public:
         return;
     }
 
+    // ENU original point set
     void origin_node_cb(const sensor_msgs::NavSatFixConstPtr &msg)
     {
         if (!msg)

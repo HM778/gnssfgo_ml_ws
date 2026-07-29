@@ -6,5 +6,6 @@
     "python.analysis.extraPaths": [
         "/home/nvidia/Work/proj1_ws/devel/lib/python3/dist-packages",
         "/opt/ros/noetic/lib/python3/dist-packages"
-    ]
+    ],
+    "python-envs.defaultEnvManager": "ms-python.python:system"
 }

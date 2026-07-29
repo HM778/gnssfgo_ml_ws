@@ -2,3 +2,8 @@ gitignore
 
 build/
 devel/
+logs/
+osqa_input.jsonl
+osqa_output.jsonl
+src/c099.csv
+src/ublox_driver_Ephems.txt

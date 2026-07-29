@@ -17,11 +17,10 @@
 #include "../datatype.h"
 using namespace gnss_comm;
 
-#define TIME_WEIGHT 0
 
 struct TRDDCPFactor
 {
-    TRDDCPFactor(TRRTKMeasurement dd_measurement,
+    TRDDCPFactor(TRDDMeasurement dd_measurement,
                 std::map<int, sv_info> current_sv_info_map,
                 std::map<int, sv_info> reference_sv_info_map,
                 double sigma, int freq_idx = -1)
@@ -48,24 +47,27 @@ struct TRDDCPFactor
         Eigen::Vector3d prev_master_pos(prev_master_sv.pos[0], prev_master_sv.pos[1], prev_master_sv.pos[2]);
         Eigen::Vector3d prev_i_pos(prev_i_sv.pos[0], prev_i_sv.pos[1], prev_i_sv.pos[2]);
 
+        // 参考历元：主卫星-接收机位置
         T est_prev_master = sqrt((prev_state[0] - T(prev_master_pos.x())) * (prev_state[0] - T(prev_master_pos.x())) +
                                  (prev_state[1] - T(prev_master_pos.y())) * (prev_state[1] - T(prev_master_pos.y())) +
                                  (prev_state[2] - T(prev_master_pos.z())) * (prev_state[2] - T(prev_master_pos.z())));
         est_prev_master = est_prev_master + T(OMGE_ / CLIGHT_) *
             (T(prev_master_pos.x()) * prev_state[1] - T(prev_master_pos.y()) * prev_state[0]);
 
+        // 参考历元：副卫星-接收机位置
         T est_prev_i = sqrt((prev_state[0] - T(prev_i_pos.x())) * (prev_state[0] - T(prev_i_pos.x())) +
                             (prev_state[1] - T(prev_i_pos.y())) * (prev_state[1] - T(prev_i_pos.y())) +
                             (prev_state[2] - T(prev_i_pos.z())) * (prev_state[2] - T(prev_i_pos.z())));
         est_prev_i = est_prev_i + T(OMGE_ / CLIGHT_) *
             (T(prev_i_pos.x()) * prev_state[1] - T(prev_i_pos.y()) * prev_state[0]);
 
+        // 当前历元：主卫星-接收机位置
         T est_curr_master = sqrt((curr_state[0] - T(curr_master_pos.x())) * (curr_state[0] - T(curr_master_pos.x())) +
                                  (curr_state[1] - T(curr_master_pos.y())) * (curr_state[1] - T(curr_master_pos.y())) +
                                  (curr_state[2] - T(curr_master_pos.z())) * (curr_state[2] - T(curr_master_pos.z())));
         est_curr_master = est_curr_master + T(OMGE_ / CLIGHT_) *
             (T(curr_master_pos.x()) * curr_state[1] - T(curr_master_pos.y()) * curr_state[0]);
-
+        // 当前历元：副卫星-接收机位置
         T est_curr_i = sqrt((curr_state[0] - T(curr_i_pos.x())) * (curr_state[0] - T(curr_i_pos.x())) +
                             (curr_state[1] - T(curr_i_pos.y())) * (curr_state[1] - T(curr_i_pos.y())) +
                             (curr_state[2] - T(curr_i_pos.z())) * (curr_state[2] - T(curr_i_pos.z())));
@@ -76,30 +78,47 @@ struct TRDDCPFactor
         // 因此不再单独引入 ambiguity state。
         T est_dd_cp = (est_curr_i - est_prev_i) - (est_curr_master - est_prev_master);
 
+        // 参考历元主卫星载波相位，参考历元副卫星载波相位，当前历元主卫星载波相位，当前历元副卫星载波相位观测值
         T prev_master_cp(0), prev_i_cp(0), curr_master_cp(0), curr_i_cp(0);
-        double sigma_prev_master = 0.0, sigma_prev_i = 0.0, sigma_curr_master = 0.0, sigma_curr_i = 0.0;
 
         auto trddcp_cp_m = [this](const gnss_comm::ObsPtr& o, const sv_info& sv) -> double {
-            if (freq_idx == -3) { double c = getIFCarrierPhase(o); return (c != 0.0) ? (c * sv.lamda) : 0.0; }
-            int li = -1; L1_freq(o, &li);
-            return (li >= 0 && li < (int)o->cp.size()) ? (o->cp[li] * sv.lamda) : 0.0;
+            int li = -1;
+            if(freq_idx == 1)  
+            {
+                L1_freq(o, &li);
+                return (li >= 0 && li < (int)o->cp.size()) ? (o->cp[li] * sv.lamda_l1) : 0.0;
+            }
+            else if(freq_idx == 2) 
+            {
+                L2_freq(o, &li);
+                return (li >= 0 && li < (int)o->cp.size()) ? (o->cp[li] * sv.lamda_l2) : 0.0;
+            }
+            else
+            {
+                return 0.0;
+            }
         };
-        auto trddcp_sigma = [this](const gnss_comm::ObsPtr& o, const std::map<int, sv_info>& smap) -> double {
-            if (freq_idx == -3) return 0.30;
-            return gnss_comm_extra::getVarofCp_ele_SNR(o, smap);
+
+        auto trddcp_sigma = [this](const gnss_comm::ObsPtr& o, const std::map<int, sv_info>& svmap) -> double {
+            return gnss_comm_extra::getVarofCp_ele_SNR(o, svmap);
         };
 
         prev_master_cp = T(trddcp_cp_m(dd_measurement.r_master_SV, prev_master_sv));
         prev_i_cp      = T(trddcp_cp_m(dd_measurement.r_iSV, prev_i_sv));
         curr_master_cp = T(trddcp_cp_m(dd_measurement.u_master_SV, curr_master_sv));
         curr_i_cp      = T(trddcp_cp_m(dd_measurement.u_iSV, curr_i_sv));
+
+        // 双差载波相位-观测值
+        T dd_cp = (curr_i_cp - prev_i_cp) - (curr_master_cp - prev_master_cp);
+
+        // 载波相位观测的方差计算，用于求因子权重
+        double sigma_prev_master = 0.0, sigma_prev_i = 0.0, sigma_curr_master = 0.0, sigma_curr_i = 0.0;
         sigma_prev_master = trddcp_sigma(dd_measurement.r_master_SV, reference_sv_info_map);
         sigma_prev_i      = trddcp_sigma(dd_measurement.r_iSV, reference_sv_info_map);
         sigma_curr_master = trddcp_sigma(dd_measurement.u_master_SV, current_sv_info_map);
         sigma_curr_i      = trddcp_sigma(dd_measurement.u_iSV, current_sv_info_map);
-        // 双差载波相位-观测值
-        T dd_cp = (curr_i_cp - prev_i_cp) - (curr_master_cp - prev_master_cp);
-
+        
+        // TODO：修改权重计算策略
         const double average_sigma = (sigma_prev_master + sigma_prev_i + sigma_curr_master + sigma_curr_i) / 4.0;
         const double sigma = std::max(0.20, average_sigma);
         if(0)
@@ -115,15 +134,14 @@ struct TRDDCPFactor
             residuals[0] = (T(est_dd_cp - dd_cp) / sigma ) * T(sqrt_info);
         }
         
-        // printf("sat_pair: %d & %d gap: %d|TRDDCP residuals: %f  | conf: %f\n",dd_measurement.u_master_SV->sat,dd_measurement.u_iSV->sat, dd_measurement.curr_epoch_index - dd_measurement.prev_epoch_index ,residuals[0], conf);
         return true;
     }
 
-    TRRTKMeasurement dd_measurement;
+    TRDDMeasurement dd_measurement;
     std::map<int, sv_info> current_sv_info_map;
     std::map<int, sv_info> reference_sv_info_map;
     double sqrt_info;
-    int freq_idx = -1;  // -1=L1, -2=L2
+    int freq_idx = -1;  // 1=L1, 2=L2
 };
 
 

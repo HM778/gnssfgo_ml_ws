@@ -157,47 +157,58 @@ struct DDPseudorangeFactor
         // 双差伪距增量-估计值
         T est_dd_pr = (est_curr_i - est_prev_i) - (est_curr_master - est_prev_master);
 
-        int l1_idx_prev_master = -1;
-        int l1_idx_prev_i = -1;
-        int l1_idx_curr_master = -1;
-        int l1_idx_curr_i = -1;
-        L1_freq(dd_measurement.r_master_SV, &l1_idx_prev_master);
-        L1_freq(dd_measurement.r_iSV, &l1_idx_prev_i);
-        L1_freq(dd_measurement.u_master_SV, &l1_idx_curr_master);
-        L1_freq(dd_measurement.u_iSV, &l1_idx_curr_i);
+        int freq_idx_prev_master = -1;
+        int freq_idx_prev_i = -1;
+        int freq_idx_curr_master = -1;
+        int freq_idx_curr_i = -1;
 
+        if(freq_idx == 1)
+        {
+            L1_freq(dd_measurement.r_master_SV, &freq_idx_prev_master);
+            L1_freq(dd_measurement.r_iSV, &freq_idx_prev_i);
+            L1_freq(dd_measurement.u_master_SV, &freq_idx_curr_master);
+            L1_freq(dd_measurement.u_iSV, &freq_idx_curr_i);
+        }
+        else
+        {
+            L2_freq(dd_measurement.r_master_SV, &freq_idx_prev_master);
+            L2_freq(dd_measurement.r_iSV, &freq_idx_prev_i);
+            L2_freq(dd_measurement.u_master_SV, &freq_idx_curr_master);
+            L2_freq(dd_measurement.u_iSV, &freq_idx_curr_i);
+        }
+        
         auto valid_psr_index = [](const gnss_comm::ObsPtr& obs, int idx) -> bool {
             return obs && idx >= 0 && idx < static_cast<int>(obs->psr.size());
         };
-        if (!valid_psr_index(dd_measurement.r_master_SV, l1_idx_prev_master) ||
-            !valid_psr_index(dd_measurement.r_iSV, l1_idx_prev_i) ||
-            !valid_psr_index(dd_measurement.u_master_SV, l1_idx_curr_master) ||
-            !valid_psr_index(dd_measurement.u_iSV, l1_idx_curr_i))
+        if (!valid_psr_index(dd_measurement.r_master_SV, freq_idx_prev_master) ||
+            !valid_psr_index(dd_measurement.r_iSV, freq_idx_prev_i) ||
+            !valid_psr_index(dd_measurement.u_master_SV, freq_idx_curr_master) ||
+            !valid_psr_index(dd_measurement.u_iSV, freq_idx_curr_i))
         {
             residuals[0] = T(0);
             return true;
         }
 
-        const T prev_master_pr = T(dd_measurement.r_master_SV->psr[l1_idx_prev_master]);
-        const T prev_i_pr = T(dd_measurement.r_iSV->psr[l1_idx_prev_i]);
-        const T curr_master_pr = T(dd_measurement.u_master_SV->psr[l1_idx_curr_master]);
-        const T curr_i_pr = T(dd_measurement.u_iSV->psr[l1_idx_curr_i]);
+        const T prev_master_pr = T(dd_measurement.r_master_SV->psr[freq_idx_prev_master]);
+        const T prev_i_pr = T(dd_measurement.r_iSV->psr[freq_idx_prev_i]);
+        const T curr_master_pr = T(dd_measurement.u_master_SV->psr[freq_idx_curr_master]);
+        const T curr_i_pr = T(dd_measurement.u_iSV->psr[freq_idx_curr_i]);
         // 双差伪距增量-测量值
         const T dd_pr = (curr_i_pr - prev_i_pr) - (curr_master_pr - prev_master_pr);
 
         // 观测值的方差估计，基于伪距观测的标准差进行传播，假设观测误差独立且服从正态分布
-        auto obs_sigma = [](const gnss_comm::ObsPtr& obs, int l1_idx) -> double {
-            if (!obs || l1_idx < 0 || l1_idx >= static_cast<int>(obs->psr_std.size()) || obs->psr_std[l1_idx] <= 0.0)
+        auto obs_sigma = [](const gnss_comm::ObsPtr& obs, int freq_idx) -> double {
+            if (!obs || freq_idx < 0 || freq_idx >= static_cast<int>(obs->psr_std.size()) || obs->psr_std[freq_idx] <= 0.0)
             {
                 return 3.0;
             }
-            return obs->psr_std[l1_idx];
+            return obs->psr_std[freq_idx];
         };
 
-        const double sigma_prev_master = obs_sigma(dd_measurement.r_master_SV, l1_idx_prev_master);
-        const double sigma_prev_i = obs_sigma(dd_measurement.r_iSV, l1_idx_prev_i);
-        const double sigma_curr_master = obs_sigma(dd_measurement.u_master_SV, l1_idx_curr_master);
-        const double sigma_curr_i = obs_sigma(dd_measurement.u_iSV, l1_idx_curr_i);
+        const double sigma_prev_master = obs_sigma(dd_measurement.r_master_SV, freq_idx_prev_master);
+        const double sigma_prev_i = obs_sigma(dd_measurement.r_iSV, freq_idx_prev_i);
+        const double sigma_curr_master = obs_sigma(dd_measurement.u_master_SV, freq_idx_curr_master);
+        const double sigma_curr_i = obs_sigma(dd_measurement.u_iSV, freq_idx_curr_i);
         const double sigma = std::max(1e-3,
             std::sqrt(sigma_prev_master * sigma_prev_master + sigma_prev_i * sigma_prev_i +
                       sigma_curr_master * sigma_curr_master + sigma_curr_i * sigma_curr_i));
@@ -212,6 +223,6 @@ struct DDPseudorangeFactor
     DDMeasurement dd_measurement;
     std::map<int, sv_info> current_sv_info_map;
     std::map<int, sv_info> reference_sv_info_map;
-    int freq_idx = -1;  // -1=L1, -2=L2
+    int freq_idx = -1;  // 1=L1, 2=L2
     double out_conf = 1.0; // confidence for outlier handling, currently not used
 };
