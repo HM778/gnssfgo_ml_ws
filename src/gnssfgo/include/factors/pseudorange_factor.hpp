@@ -226,3 +226,5 @@ struct DDPseudorangeFactor
     int freq_idx = -1;  // 1=L1, 2=L2
     double out_conf = 1.0; // confidence for outlier handling, currently not used
 };
+
+

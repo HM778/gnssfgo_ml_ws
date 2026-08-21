@@ -99,7 +99,7 @@ public:
     /* factor counts for per-iteration summary */
     int last_added_psr_factor_count = 0;
     int last_added_doppler_factor_count = 0;
-    int max_psr_factors_per_epoch_ = 24;
+    int max_psr_factors_per_epoch_ = 12;
 
     /* latest GNSS-RTK solution with LAMBDA */
     Eigen::Matrix<double, 3,1> fixedStateGNSSRTK;
@@ -118,6 +118,15 @@ public:
     double marginalization_prior_time_ = -1.0;
     std::array<double, state_size> marginalization_prior_mean_{};
     Eigen::Matrix<double, state_size, state_size> marginalization_prior_sqrt_info_ = Eigen::Matrix<double, state_size, state_size>::Identity();
+
+    // 用于存储每个观测的候选解，用于后续的因子添加和优化
+    struct PsrCandidate
+            {
+                const gnss_comm_extra::CorrectedPseudorangeMeasurement *measurement = nullptr;
+                double effective_sigma = 0.0;
+                double priority = 0.0;
+            };
+    std::vector<PsrCandidate> PsrCandidates;
 
     // ===== OSQA Transformer 质量评分存储 =====
     // key: satellite PRN (integer), value: quality score [0, 1]
@@ -847,14 +856,8 @@ public:
             const std::vector<gnss_comm_extra::CorrectedPseudorangeMeasurement> corrected_measurements =
                 gnss_comm_extra::buildCorrectedPseudorangeMeasurements(epoch_gnss_data, epoch_ephems, state_guess, has_state_guess, iono_params);
 
-            struct PsrCandidate
-            {
-                const gnss_comm_extra::CorrectedPseudorangeMeasurement *measurement = nullptr;
-                double effective_sigma = 0.0;
-                double priority = 0.0;
-            };
-            std::vector<PsrCandidate> candidates;
-            candidates.reserve(corrected_measurements.size());
+            PsrCandidates.clear();
+            PsrCandidates.reserve(corrected_measurements.size());
 
             for (const auto &measurement : corrected_measurements)
             {
@@ -879,24 +882,24 @@ public:
                 const double sigma_safe = std::max(effective_sigma, 1.0e-3);
                 const double priority = (quality * elev_weight) / sigma_safe;
 
-                candidates.push_back(PsrCandidate{&measurement, effective_sigma, priority});
+                PsrCandidates.push_back(PsrCandidate{&measurement, effective_sigma, priority});
             }
 
-            if (candidates.empty())
+            if (PsrCandidates.empty())
             {
                 continue;
             }
 
-            std::sort(candidates.begin(), candidates.end(),
+            std::sort(PsrCandidates.begin(), PsrCandidates.end(),
                       [](const PsrCandidate &a, const PsrCandidate &b) {
                           return a.priority > b.priority;
                       });
 
             const int cap_per_epoch = std::max(4, max_psr_factors_per_epoch_);
-            const int keep_count = std::min(static_cast<int>(candidates.size()), cap_per_epoch);
+            const int keep_count = std::min(static_cast<int>(PsrCandidates.size()), cap_per_epoch);
             for (int i = 0; i < keep_count; ++i)
             {
-                const auto *measurement = candidates[i].measurement;
+                const auto *measurement = PsrCandidates[i].measurement;
                 ceres::CostFunction* ps_function = new ceres::AutoDiffCostFunction<pseudorangeFactor, 1
                                                                 , state_size>(new pseudorangeFactor(
                                                                     measurement->sat_sys,
@@ -904,7 +907,7 @@ public:
                                                                     measurement->sat_pos.y(),
                                                                     measurement->sat_pos.z(),
                                                                     measurement->pseudorange,
-                                                                    candidates[i].effective_sigma,
+                                                                    PsrCandidates[i].effective_sigma,
                                                                     measurement->sv_dt_sec,
                                                                     measurement->tgd_sec,
                                                                     measurement->ion_delay_m,

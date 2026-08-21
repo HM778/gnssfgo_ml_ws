@@ -48,6 +48,8 @@ public:
     bool SAME_RELIABLE = false;
     bool SAME_TIME_WEIGHT = false;
 
+    std::map<int, std::map<std::string, double>> residuals;  // prns -> factor_name -> residual_value
+
 public:
     SelfAdjustedFactorGraph()
     {
@@ -260,7 +262,9 @@ public:
                             quality_score = getQualityScore(obs->sat);
 #endif
 
-                            tr_meas.tr_score = pow(p_rel,1.0/6.0) * time_discount * quality_score;
+                            // 保证载波相位双差因子权重不会过低；即使 OSQA quality_score 很低，
+                            // 载波相位约束仍保留一定强度，避免优化退化为纯伪距解。
+                            tr_meas.tr_score = std::max(0.5, pow(p_rel,1.0/6.0) * time_discount * quality_score);
                             tr_measurments.push_back(tr_meas);
 
                             TRFactorCount++;
@@ -540,9 +544,23 @@ public:
 
         //更新sat_cp_const以适应卫星状态的变化，避免过时的常数导致误判周跳
         std::map<int,double> sat_cp_const;
-        if(freq == 1) sat_cp_const = sat_cp_const_l1;
-        else if(freq == 2) sat_cp_const = sat_cp_const_l2;
-        sat_cp_const[sat_id] = curr_cp_cycle - prev_cp_cycle;
+        if(freq == 1) 
+        {
+            if(sat_cp_const_l1.find(sat_id) == sat_cp_const_l1.end() || sat_cp_const_l1[sat_id] == 0.0)
+            {
+                sat_cp_const_l1[sat_id] = curr_cp_cycle - prev_cp_cycle;
+            }
+            sat_cp_const = sat_cp_const_l1;
+        }
+        else if(freq == 2) 
+        {
+            if(sat_cp_const_l2.find(sat_id) == sat_cp_const_l2.end() || sat_cp_const_l2[sat_id] == 0.0)
+            {
+                sat_cp_const_l2[sat_id] = curr_cp_cycle - prev_cp_cycle;
+            }
+            sat_cp_const = sat_cp_const_l2;
+        }
+        
         
         const Eigen::Vector3d prev_vel{doppler_map[allobs_prev->first].twist.twist.linear.x,
                                     doppler_map[allobs_prev->first].twist.twist.linear.y,
@@ -602,6 +620,63 @@ public:
         }
 
         return false;
+    }
+
+    // 根据优化结果更新残差
+    void CPresidualsUpdate()
+    {
+        residuals.clear();
+        for (const auto &obs : gnss_raw_map[time_frame_now])
+        {
+            if (!obs) continue;
+            int sat = static_cast<int>(obs->sat);
+            residuals[sat] = std::map<std::string, double>({{"dop_cp", 0.0}});
+        }
+
+        Eigen::Vector3d opt_vel = Eigen::Vector3d(doppler_map[time_frame_now].twist.twist.linear.x,
+                                                doppler_map[time_frame_now].twist.twist.linear.y,
+                                                doppler_map[time_frame_now].twist.twist.linear.z);
+        
+        for (const auto &obs : gnss_raw_map[time_frame_now])
+        {
+            if (!obs) continue;
+            int sat = static_cast<int>(obs->sat);
+            int l1_idx = -1;
+            L1_freq(obs, &l1_idx);
+            double obs_cp = obs->cp[l1_idx];
+            sv_info& sat_info = sv_info_map[sat];
+            // 载波相位变化残差
+            if(measSize < 2)
+            {
+                continue;
+            }
+            else
+            {
+                double curr_cp_cycle = obs->cp[l1_idx];
+                double prev_cp_cycle = 0.0;
+                for(int i = 0;i<gnss_raw_map[time_frame_last].size();i++)
+                {
+                    if(gnss_raw_map[time_frame_last][i]->sat == sat)
+                    {
+                        int prev_l1_idx = -1;
+                        L1_freq(gnss_raw_map[time_frame_last][i], &prev_l1_idx);
+                        if(prev_l1_idx >= 0)
+                        {
+                            prev_cp_cycle = gnss_raw_map[time_frame_last][i]->cp[prev_l1_idx];
+                        }
+                    }
+                }
+                if(prev_cp_cycle == 0.0)
+                {
+                    continue;
+                }
+                ROS_INFO("Satellite %d: delta=%.3f cycles, const=%.3f cycles", sat, (curr_cp_cycle - prev_cp_cycle), sat_cp_const_l1[sat]);
+                double delta_cp_obs = (curr_cp_cycle - prev_cp_cycle) - sat_cp_const_l1[sat];
+                double doppler_move = (time_frame_now - time_frame_last)*0.1*opt_vel.norm();
+                double dop_cp_residual = delta_cp_obs - doppler_move;
+                residuals[sat]["dop_cp"] = dop_cp_residual;
+            }
+        }
     }
 
     // 输出ENU结果估计的协方差

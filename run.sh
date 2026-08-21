@@ -14,7 +14,9 @@ ENABLE_OSQA="true"
 if [ "${ENABLE_OSQA}" = "true" ]; then
     # 可选：开启 Transformer/OSQA（传参 1）
     echo "Running GNSS Quality Analyzer with visualization..."
-    gnome-terminal -- bash -c "cd \"${WS_DIR}/GNSS-Transformer/gnss_quality_analyzer\" && python3 run_analyzer.py --gnssfgo-input \"${OSQA_INPUT_PATH}\" --gnssfgo-output \"${OSQA_OUTPUT_PATH}\" --urban --vis; exec bash"
+    # layout: compact、full
+    # --permissive 使用宽松学习策略，降低正常卫星被误判为 suspect/unreliable 的概率
+    gnome-terminal -- bash -c "cd \"${WS_DIR}/GNSS-Transformer/gnss_quality_analyzer\" && python3 run_analyzer.py --gnssfgo-input \"${OSQA_INPUT_PATH}\" --gnssfgo-output \"${OSQA_OUTPUT_PATH}\" --permissive --vis --layout compact; exec bash"
     sleep 3s
 else
     echo "OSQA/Transformer disabled. Running gnssfgo only."

@@ -52,7 +52,7 @@ public:
         // params setting
         loadParams();
         nh.param<double>("max_running_time_ms",max_running_time_ms,50.0);
-        nh.param<int>("max_psr_factors_per_epoch", max_psr_factors_per_epoch, 24);
+        nh.param<int>("max_psr_factors_per_epoch", max_psr_factors_per_epoch, 12);
         nh.param<int>("min_tr_factor_num", min_tr_factor_num, 20);
 
         nh.param<bool>("same_time_weight", SAME_TIME_WEIGHT, false);
@@ -203,6 +203,7 @@ public:
                         ceres::Solve(local_options, &factor_graph.problem, &factor_graph.summary);
                         // factor_graph.solveFloatAmbiguity();
                         factor_graph.saveGraphStateToVector(true);
+                        factor_graph.CPresidualsUpdate();
 
                         // ===== OSQA Transformer 数据导出 =====
                         // 在优化完成后，将所有预处理数据和因子残差导出到 JSONL 文件
@@ -578,15 +579,19 @@ public:
         }
 
         // ---- 因子残差 (占位, TR DD CP/PR 留待后续细化) ----
+        // todo 2026-8-13 因周跳未参与优化的因子残差，需要填充为0，在学习时过滤
         std::map<int, std::map<std::string, double>> factor_residuals;
         for (const auto &obs : observations)
         {
             if (!obs) continue;
             int sat = static_cast<int>(obs->sat);
             std::map<std::string, double> res;
-            res["psr"] = 0.0;
-            res["tr_dd_pr"] = 0.0;
-            res["tr_dd_cp"] = 0.0;
+            res["dop_cp"] = 0.0;
+            res = factor_graph.residuals[sat];
+            res["psr"] = psr_residual_map[sat];
+            ROS_INFO("sat %d psr_residual %f", sat, res["psr"]);
+            ROS_INFO("sat %d dop_cp %f", sat, res["dop_cp"]);
+
             factor_residuals[sat] = res;
         }
 
