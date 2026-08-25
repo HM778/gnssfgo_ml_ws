@@ -19,15 +19,13 @@ class SelfAdjustedTR : public ProcessingNodeExtra
     std::thread optimizationThread;
 
     double last_ingested_time_frame = -1.0;
-    std::map<int, sv_info> last_sv_info_map;
-    double max_running_time_ms;
-    int max_psr_factors_per_epoch = 24;
-    int min_tr_factor_num = 20;
-    double min_output_dt = 0.0;
-    bool SAME_RELIABLE,SAME_TIME_WEIGHT;
-    double last_output_time_sec = -1.0;
-
-    // ===== OSQA Transformer 质量评估桥接 =====
+    std::map<int, sv_info> last_sv_info_map;    //更新前的卫星信息
+    double max_running_time_ms;                 //单次优化最大运行时间
+    int max_psr_factors_per_epoch = 24;         //每轮优化最大伪距因子数
+    int min_tr_factor_num = 20;                 //每轮优化最少TR因子数，避免约束过弱
+    bool SAME_RELIABLE,SAME_TIME_WEIGHT;        //对照组开关参数
+    
+    // ===== OSQA Transformer 质量评估桥接 相关参数初始化=====
 #ifdef ENABLE_TRANSFORMER_BRIDGE
     bool osqa_enabled = false;
     std::string osqa_input_path;
@@ -60,7 +58,7 @@ public:
         
         ROS_ERROR("Set time_dicount/reliable method: %d / %d", SAME_TIME_WEIGHT,SAME_RELIABLE);
 
-        // ===== OSQA Transformer 质量评估桥接配置 =====
+        // ===== OSQA Transformer 质量评估桥接 相关参数加载=====
 #ifdef ENABLE_TRANSFORMER_BRIDGE
         nh.param<bool>("osqa_enabled", osqa_enabled, false);
         if (osqa_enabled)
@@ -87,6 +85,7 @@ public:
         
         InitialSubTopics();
         InitialPubTopics();
+        // callback队列
         StartSpinners(); 
         optimizationThread = std::thread(&SelfAdjustedTR::Optimization, this);
     }
@@ -235,7 +234,6 @@ public:
                         // fgo_enu坐标输出
                         update_fgo_enu(factor_graph.getLatestPosENU()(0), factor_graph.getLatestPosENU()(1), factor_graph.getLatestPosENU()(2));
                         update_fgo_llh(factor_graph.getLatestPosLLH()(0), factor_graph.getLatestPosLLH()(1), factor_graph.getLatestPosLLH()(2));
-                        last_output_time_sec = curr_time_sec;
                         
                         last_pos_ecef(0)=factor_graph.getLatestPosECEF()(0);
                         last_pos_ecef(1)=factor_graph.getLatestPosECEF()(1);
@@ -272,13 +270,14 @@ public:
 
     void synchronizeAndInput()
     {
-        // 伪距、速度至少一者可用
+        // 伪距、速度均可用
         if (!can_solve())
         {
             hasNewData.store(false, std::memory_order_release);
             return;
         }
 
+        // 观测数据的局部保存变量
         std::vector<gnss_comm::ObsPtr> local_fgo_input_raw;
         std::vector<gnss_comm::EphemBasePtr> local_ephem_array;
         gnss_comm::gtime_t local_sys_time;
@@ -313,7 +312,7 @@ public:
 
         // Incrementally update satellite states for this epoch:
         // start from the last available result, then refresh/add current satellites.
-        // 更新卫星信息
+        // 增量更新卫星信息
         std::map<int, sv_info> local_sv_info_map = last_sv_info_map;
         
         if (gpsTimeValid(local_gpst_sec) || sysTimeValid(local_sys_time))
@@ -344,14 +343,13 @@ public:
                         break;
                     }
 
-                    if (!std::isfinite(sv.pos[0]) || sv.pos[0] == 0.0)
+                    if(!satPosValid(sv.pos[0], sv.pos[1], sv.pos[2]))
                     {
                         sv.avaliable = false;
-                        local_sv_info_map[sat_i] = sv;
+                        // Mark the satellite as unavailable,discard updating
                         continue;
                     }
-                    sv.avaliable = true;
-
+                                        
                     if (local_enu_ref_set && posValid(local_latest_pos_llh))
                     {
                         const double d_sr = (local_latest_pos_ecef - sv.pos).norm();
@@ -363,9 +361,11 @@ public:
                         const Eigen::Vector3d rev2sat_enu = gnss_comm::ecef2enu(local_enu_ref_llh, rev2sat_ecef);
                         sv.azimuth = (rev2sat_enu.head<2>().norm() < 1e-12) ? 0.0 : atan2(rev2sat_enu.x(), rev2sat_enu.y());
                         sv.elevation = asin(std::max(-1.0, std::min(1.0, rev2sat_enu.z())));
+
+                        sv.avaliable = true;
+                        local_sv_info_map[sat_i] = sv;
                     }
 
-                    local_sv_info_map[sat_i] = sv;
                     continue;
                 }
 
@@ -390,10 +390,9 @@ public:
                     if (!std::isfinite(sv.pos[0]) || sv.pos[0] == 0.0)
                     {
                         sv.avaliable = false;
-                        local_sv_info_map[sat_i] = sv;
+                        // Mark the satellite as unavailable, discard updating
                         continue;
                     }
-                    sv.avaliable = true;
 
                     if (local_enu_ref_set && posValid(local_latest_pos_llh))
                     {
@@ -406,9 +405,10 @@ public:
                         const Eigen::Vector3d rev2sat_enu = gnss_comm::ecef2enu(local_enu_ref_llh, rev2sat_ecef);
                         sv.azimuth = (rev2sat_enu.head<2>().norm() < 1e-12) ? 0.0 : atan2(rev2sat_enu.x(), rev2sat_enu.y());
                         sv.elevation = asin(std::max(-1.0, std::min(1.0, rev2sat_enu.z())));
-                    }
 
-                    local_sv_info_map[sat_i] = sv;
+                        sv.avaliable = true;
+                        local_sv_info_map[sat_i] = sv;
+                    }                    
                 }
             }
         }
@@ -416,9 +416,8 @@ public:
         last_sv_info_map = local_sv_info_map;
 
         const double base_gpst_sec = (gpsTimeValid(local_gpst_sec))? local_gpst_sec: (local_sys_time.time + local_sys_time.sec);
-        const double time_frame = base_gpst_sec * 10.0;
-        // ROS_WARN("------------------end-------------------------Processing time %f", time_frame);
-
+        const double time_frame = base_gpst_sec * 10.0;  //0.1s为单位的时间帧
+        
         // 防止重复输入同一时刻的数据（如多次收到相同的观测数据或星历数据更新时）
         if (std::isfinite(last_ingested_time_frame) && std::abs(time_frame - last_ingested_time_frame) < 1e-6)
         {
@@ -439,8 +438,8 @@ public:
             // Different input standards:
             // - Doppler is used for continuous propagation (looser gate).
             // - DD pseudorange/TDCP needs at least 4 common satellites.
-            static constexpr int kMinGnssSatsForTdcp = 4;
-            const bool gnss_obs_ok = ((int)local_fgo_input_raw.size() >= kMinGnssSatsForTdcp) && ((int)local_ephem_array.size() >= kMinGnssSatsForTdcp);
+
+            const bool gnss_obs_ok = ((int)local_fgo_input_raw.size() >= 4) && ((int)local_ephem_array.size() >= 4);
 
             fgo_input_raw = gnss_obs_ok ? local_fgo_input_raw : std::vector<gnss_comm::ObsPtr>();
 

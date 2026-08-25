@@ -154,6 +154,7 @@ public:
                                      });
     }
 
+    // 原始数据订阅
     void InitialSubTopics()
     {
         nh_range_ = ros::NodeHandle(nh);
@@ -167,6 +168,7 @@ public:
         sub_origin_node = nh_range_.subscribe<sensor_msgs::NavSatFix>("/ublox_driver/receiver_lla", 1000, &ProcessingNodeExtra::origin_node_cb, this);
     }
 
+    // 优化结果输出
     void InitialPubTopics()
     {
         pub_psr_llh_latest = nh.advertise<sensor_msgs::NavSatFix>(WLS_LLH_TOPIC, 100); 
@@ -681,6 +683,7 @@ public:
         return (time.time > 0) || (time.time == 0 && time.sec >= 0.0);
     }
 
+    // 判断回调函数内计算结果是否有效
     bool can_solve()
     {
         Eigen::Vector3d pos_llh;
@@ -694,6 +697,32 @@ public:
         return posValid(pos_llh) && velValid(vel_xyz);
     }
 
+    bool satPosValid(double x, double y, double z) 
+    {
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
+            return false;
+        }
+
+        if (x == 0.0 && y == 0.0 && z == 0.0) {
+            return false;
+        }
+
+        //    地球半径约 6371 km，卫星轨道高度：
+        //    - LEO: 200-2000 km
+        //    - GPS/MEO: ~20200 km
+        //    - GEO: ~35786 km
+        //    距地心距离应在 6371 km 到 45000 km 之间
+        const double MIN_RADIUS = 6.0e6;      // 最小半径 6000 km
+        const double MAX_RADIUS = 4.5e7;      // 最大半径 45000 km
+        
+        double distance = std::sqrt(x*x + y*y + z*z);
+        if (distance < MIN_RADIUS || distance > MAX_RADIUS) {
+            return false;
+        }
+        return true;
+    }
+
+    // 位置结果有效性判断
     bool posValid(Eigen::Vector3d pos)
     {
         if (!std::isfinite(pos(0)) || !std::isfinite(pos(1)) || !std::isfinite(pos(2)))
@@ -714,6 +743,7 @@ public:
             return true;
     }
     
+    // 速度结果有效性判断
     bool velValid(Eigen::Vector3d vel)
     {
         if (!std::isfinite(vel(0)) || !std::isfinite(vel(1)) || !std::isfinite(vel(2)))
