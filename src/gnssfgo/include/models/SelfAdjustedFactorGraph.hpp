@@ -38,8 +38,6 @@ public:
 
     std::map<int,int> sat_lock_count_l1,sat_lock_count_l2;  // 卫星连续观测计数器L1,L2频段分开统计
     std::map<int,bool> sat_lock_check,sat_lock_check_l1,sat_lock_check_l2; // 卫星连续观测检查标志
-    std::map<int,double> sat_cp_const_l1,sat_cp_const_l2;   // 卫星TR锁定状态
-    std::map<int,double> sat_const_residual_l1,sat_const_residual_l2; // 预拟合残差基线（按卫星维护）
 
     int MaxTRFactorNum = 100;   // TR因子数量上限，动态调整以控制优化时间
     int MinTRFactorNum = 20;    // TR因子数量下限，避免约束过弱
@@ -49,6 +47,11 @@ public:
     bool SAME_TIME_WEIGHT = false;
 
     std::map<int, std::map<std::string, double>> residuals;  // prns -> factor_name -> residual_value
+    // TDEC 周跳检测的共模项缓存 (按历元+频段): 接收机钟跳步会使所有卫星的
+    // Δcp 同步偏移, 不扣除会触发大规模"周跳"误报、锁定集体清零、TDCP 约束瞬间真空
+    double tdec_common_l1_ = 0.0, tdec_common_l2_ = 0.0;
+    double tdec_common_epoch_ = -1.0;
+    bool tdec_common_valid_l1_ = false, tdec_common_valid_l2_ = false;
 
 public:
     SelfAdjustedFactorGraph()
@@ -257,14 +260,16 @@ public:
                             }
 
                             // OSQA Transformer 质量评分集成
+                            // 可信卫星 (q≈1) 的 TDCP 因子获得全额权重, 低可信卫星按比例降权;
+                            // 保留 0.1 的下限, 避免极端情况下优化退化为纯伪距解。
+                            // TDCP 精度 (σ≈3-8cm) 远高于伪距 (σ≈1.4m), 配合 σ 模型统一后
+                            // 可信卫星的载波相位约束在解中占主导。
                             double quality_score = 1.0;
 #ifdef ENABLE_TRANSFORMER_BRIDGE
                             quality_score = getQualityScore(obs->sat);
 #endif
 
-                            // 保证载波相位双差因子权重不会过低；即使 OSQA quality_score 很低，
-                            // 载波相位约束仍保留一定强度，避免优化退化为纯伪距解。
-                            tr_meas.tr_score = std::max(0.5, pow(p_rel,1.0/6.0) * time_discount * quality_score);
+                            tr_meas.tr_score = std::max(0.1, pow(p_rel,1.0/6.0) * time_discount * quality_score);
                             tr_measurments.push_back(tr_meas);
 
                             TRFactorCount++;
@@ -439,6 +444,74 @@ public:
         }
     }
 
+    // 计算当前历元对 TDEC 残差 (Δcp + doppler_mean·Δt) 的全体卫星中位数, 按历元+频段缓存。
+    // 样本 <4 时返回 0 (早期历元统计不足, 不做共模修正)。
+    double tdecCommonTerm(int freq)
+    {
+        if (tdec_common_epoch_ != time_frame_now)
+        {
+            tdec_common_l1_ = 0.0;
+            tdec_common_l2_ = 0.0;
+            tdec_common_epoch_ = time_frame_now;
+        }
+        double &cached = (freq == 1) ? tdec_common_l1_ : tdec_common_l2_;
+        bool &cached_valid = (freq == 1) ? tdec_common_valid_l1_ : tdec_common_valid_l2_;
+        if (cached_valid) return cached;                        // 本历元已计算
+
+        if (gnss_raw_map.size() < 2) return 0.0;
+        const auto allobs_now = gnss_raw_map.rbegin();
+        const auto allobs_prev = std::next(allobs_now);
+        const auto prev_sv_it = sv_info_window_map.find(allobs_prev->first);
+        const auto curr_sv_it = sv_info_window_map.find(allobs_now->first);
+        if (prev_sv_it == sv_info_window_map.end() || curr_sv_it == sv_info_window_map.end())
+        {
+            return 0.0;
+        }
+
+        std::vector<double> samples;
+        for (const auto &obs : allobs_now->second)
+        {
+            if (!obs) continue;
+            const int sat = static_cast<int>(obs->sat);
+            int ci = -1, pi = -1;
+            if (freq == 1) { L1_freq(obs, &ci); } else { L2_freq(obs, &ci); }
+            if (ci < 0 || ci >= static_cast<int>(obs->cp.size()) ||
+                ci >= static_cast<int>(obs->dopp.size())) continue;
+            const double curr_cp = obs->cp[ci];
+            const double dopp_curr = obs->dopp[ci];
+            double prev_cp = 0.0, dopp_prev = 0.0, prev_sec = 0.0, curr_sec = 0.0;
+            bool found = false;
+            for (const auto &prev_obs : allobs_prev->second)
+            {
+                if (prev_obs && static_cast<int>(prev_obs->sat) == sat)
+                {
+                    if (freq == 1) { L1_freq(prev_obs, &pi); } else { L2_freq(prev_obs, &pi); }
+                    if (pi >= 0 && pi < static_cast<int>(prev_obs->cp.size()) &&
+                        pi < static_cast<int>(prev_obs->dopp.size()))
+                    {
+                        prev_cp = prev_obs->cp[pi];
+                        dopp_prev = prev_obs->dopp[pi];
+                        prev_sec = prev_obs->time.time + prev_obs->time.sec;
+                        curr_sec = obs->time.time + obs->time.sec;
+                        found = true;
+                    }
+                    break;
+                }
+            }
+            if (!found || prev_cp == 0.0 || curr_cp == 0.0) continue;
+            const double dt = curr_sec - prev_sec;
+            if (!std::isfinite(dt) || dt <= 0.0) continue;
+            samples.push_back((curr_cp - prev_cp) + 0.5 * (dopp_curr + dopp_prev) * dt);
+        }
+        if (samples.size() < 4) return 0.0;   // 样本不足: 本历元保持共模 0
+        cached_valid = true;
+        std::sort(samples.begin(), samples.end());
+        const size_t mid = samples.size() / 2;
+        cached = (samples.size() % 2 == 1) ? samples[mid]
+                                           : 0.5 * (samples[mid - 1] + samples[mid]);
+        return cached;
+    }
+
     // for single freq check
     bool cycleSlipDetect(int sat_id, int freq)
     {
@@ -447,15 +520,11 @@ public:
             {
                 sat_lock_count_l1[sat_id] = 0;
                 sat_lock_check_l1[sat_id] = true;
-                sat_cp_const_l1.erase(sat_id);
-                sat_const_residual_l1.erase(sat_id);
             }
             else
             {
                 sat_lock_count_l2[sat_id] = 0;
                 sat_lock_check_l2[sat_id] = true;
-                sat_cp_const_l2.erase(sat_id);
-                sat_const_residual_l2.erase(sat_id);
             }
             ROS_INFO("SAT: %d [%d] --- SLIP REASON: %d",sat_id, freq, reason);
         };
@@ -520,101 +589,43 @@ public:
         }
 
 
-        const sv_info& prev_sv = prev_sat_it->second;
-        const sv_info& curr_sv = curr_sat_it->second;
-
-        double curr_lambda,prev_lambda;
-        if(freq == 1)
+        // TDEC 周跳检测: 载波相位历元间差分 vs 该星自身多普勒积分
+        // 预测 Δcp_pred = -doppler·Δt (相邻历元多普勒取均值, 梯形积分)。
+        // 该检验只依赖观测流内部的 cp↔doppler 相干性, 不依赖星历几何:
+        // - 卫星运动与接收机钟漂均已体现在 doppler 中, 无需额外建模;
+        // - 周跳使 cp 跳变 k 个整周而 doppler 连续, 残差出现 λ·k 量级跳变;
+        // - 旧实现用锁定时刻快照 sat_cp_const 抵消卫星运动项, 快照随时间失稳,
+        //   且预测式漏掉卫星运动项, 导致每 3~5 历元必然误报周跳、锁定计数反复清零。
+        double dopp_curr = 0.0, dopp_prev = 0.0;
+        int dopp_idx = -1;
+        if (freq == 1) { L1_freq(curr_obs, &dopp_idx); }
+        else           { L2_freq(curr_obs, &dopp_idx); }
+        if (dopp_idx >= 0 && dopp_idx < static_cast<int>(curr_obs->dopp.size()))
         {
-            curr_lambda = (curr_sv.lamda_l1 > 0.0) ? curr_sv.lamda_l1 : 0;
-            prev_lambda = (prev_sv.lamda_l1 > 0.0) ? prev_sv.lamda_l1 : 0;
+            dopp_curr = curr_obs->dopp[dopp_idx];
         }
-        else if(freq == 2)
+        dopp_idx = -1;
+        if (freq == 1) { L1_freq(prev_obs, &dopp_idx); }
+        else           { L2_freq(prev_obs, &dopp_idx); }
+        if (dopp_idx >= 0 && dopp_idx < static_cast<int>(prev_obs->dopp.size()))
         {
-            curr_lambda = (curr_sv.lamda_l2 > 0.0) ? curr_sv.lamda_l2 : 0;
-            prev_lambda = (prev_sv.lamda_l2 > 0.0) ? prev_sv.lamda_l2 : 0;
-        }
-        
-        if (!std::isfinite(curr_lambda) || curr_lambda <= 0.0 || !std::isfinite(prev_lambda) || prev_lambda <= 0.0 || prev_lambda != curr_lambda)
-        {
-            // 卫星波长无效
-            mark_slip(7);
-            return true;
-        }
-
-        //更新sat_cp_const以适应卫星状态的变化，避免过时的常数导致误判周跳
-        std::map<int,double> sat_cp_const;
-        if(freq == 1) 
-        {
-            if(sat_cp_const_l1.find(sat_id) == sat_cp_const_l1.end() || sat_cp_const_l1[sat_id] == 0.0)
-            {
-                sat_cp_const_l1[sat_id] = curr_cp_cycle - prev_cp_cycle;
-            }
-            sat_cp_const = sat_cp_const_l1;
-        }
-        else if(freq == 2) 
-        {
-            if(sat_cp_const_l2.find(sat_id) == sat_cp_const_l2.end() || sat_cp_const_l2[sat_id] == 0.0)
-            {
-                sat_cp_const_l2[sat_id] = curr_cp_cycle - prev_cp_cycle;
-            }
-            sat_cp_const = sat_cp_const_l2;
-        }
-        
-        
-        const Eigen::Vector3d prev_vel{doppler_map[allobs_prev->first].twist.twist.linear.x,
-                                    doppler_map[allobs_prev->first].twist.twist.linear.y,
-                                    doppler_map[allobs_prev->first].twist.twist.linear.z};
-        const Eigen::Vector3d curr_vel{doppler_map[allobs_now->first].twist.twist.linear.x,
-                                    doppler_map[allobs_now->first].twist.twist.linear.y,
-                                    doppler_map[allobs_now->first].twist.twist.linear.z};
-                
-
-        // 积分多普勒辅助的载波相位检查
-        const Eigen::Vector3d prev_rcv(state_array[measSize - 2][0], state_array[measSize - 2][1], state_array[measSize - 2][2]);
-        Eigen::Vector3d curr_rcv;
-        // 时间戳被放大10倍保存，所以/10
-        curr_rcv.x() = prev_rcv.x() + ((curr_time_sec - prev_time_sec) / 10.0) * doppler_map[allobs_now->first].twist.twist.linear.x;
-        curr_rcv.y() = prev_rcv.y() + ((curr_time_sec - prev_time_sec) / 10.0) * doppler_map[allobs_now->first].twist.twist.linear.y;
-        curr_rcv.z() = prev_rcv.z() + ((curr_time_sec - prev_time_sec) / 10.0) * doppler_map[allobs_now->first].twist.twist.linear.z;
-        const Eigen::Vector3d prev_sat(prev_sv.pos[0], prev_sv.pos[1], prev_sv.pos[2]);
-        const Eigen::Vector3d curr_sat(curr_sv.pos[0], curr_sv.pos[1], curr_sv.pos[2]);
-        
-        // LOS卫地距离
-        const Eigen::Vector3d prev_los = prev_sat - prev_rcv;
-        const Eigen::Vector3d curr_los = curr_sat - curr_rcv;
-        if (!std::isfinite(prev_los.norm()) || !std::isfinite(curr_los.norm()) ||
-            prev_los.norm() <= 0.0 || curr_los.norm() <= 0.0)
-        {
-            // 卫地距离异常
-            mark_slip(8);
-            return true;
+            dopp_prev = prev_obs->dopp[dopp_idx];
         }
 
-        Eigen::Vector3d los = prev_los + curr_los;
-        if (!std::isfinite(los.norm()) || los.norm() <= 0.0)
-        {
-            los = curr_los;
-        }
-        else
-        {
-            los.normalize();
-        }
+        const double delta_cp_pred = -0.5 * (dopp_curr + dopp_prev) * dt;
+        const double delta_cp_obs = curr_cp_cycle - prev_cp_cycle;
 
-        // 载波相位变化预测值
+        // 扣除本历元对所有卫星共同的 TDEC 偏移 (中位数):
+        // 接收机钟跳步/钟瞬态会同步影响全部卫星, 属接收机行为而非周跳;
+        // 单颗卫星的真实周跳仍会相对中位数偏离而被捕获
+        const double tdec_common = tdecCommonTerm(freq);
 
-        const double delta_cp_pred = ((curr_vel + prev_vel).dot(los) * (curr_time_sec - prev_time_sec) / 10.0)/(2 * curr_lambda);
-        // 载波相位变化观测值
-
-        // double sat_cp_const = (freq==1) ? sat_cp_const_l1[sat_id] : ((freq==2) ? sat_cp_const_l2[sat_id] : 0.0)
-
-        const double delta_cp_obs = (curr_cp_cycle - prev_cp_cycle) - sat_cp_const[sat_id];
-        
-        constexpr double kCycleSlipThresholdCycle = 1.0; // 预测和观测的载波相位变化超过1周期则判定为可能发生了周跳
-        if(std::abs(delta_cp_obs - delta_cp_pred) > kCycleSlipThresholdCycle)
+        // 阈值 2 周: 实测数据 cp↔doppler 相干噪声远小于 1 周,
+        // 取 2 周在保证整周跳变捕获的同时抑制多普勒噪声引起的误报
+        constexpr double kCycleSlipThresholdCycle = 2.0;
+        if(std::abs(delta_cp_obs - delta_cp_pred - tdec_common) > kCycleSlipThresholdCycle)
         {
             mark_slip(9);
-            // ROS_INFO("SLIP REASON 10");
             ROS_INFO("Satellite %d: Delta CP Pred=%.3f cycles, Delta CP Obs=%.3f cycles", sat_id, delta_cp_pred, delta_cp_obs);
             return true;
         }
@@ -622,63 +633,137 @@ public:
         return false;
     }
 
-    // 根据优化结果更新残差
+    // 求解结果发散防护: 正常情况下 FGO 与 SPP 初值偏差在数十米内。
+    // 个别历元(如接收机钟跳步引发约束重构时)优化器会收敛到公里级错误盆地
+    // 且 opt_time 飙升, 此时把最新历元状态回退为 SPP 初值, 防止异常输出与
+    // 滑窗状态污染 (下一历元以正常约束重新求解, 观测上表现为单点恢复)。
+    bool guardLatestStateAgainstDivergence(const Eigen::Vector3d &spp_init,
+                                           double max_jump_m = 50.0)
+    {
+        if (measSize <= 0 || state_array.empty() || state_array[measSize - 1] == nullptr)
+        {
+            return false;
+        }
+        const int last = measSize - 1;
+        const Eigen::Vector3d solved(state_array[last][0], state_array[last][1], state_array[last][2]);
+        if (!std::isfinite(solved.norm()))
+        {
+            ROS_WARN("[FGO Guard] non-finite state, fallback to SPP init");
+            state_array[last][0] = spp_init.x();
+            state_array[last][1] = spp_init.y();
+            state_array[last][2] = spp_init.z();
+            return true;
+        }
+        const double jump = (solved - spp_init).norm();
+        if (jump > max_jump_m)
+        {
+            ROS_WARN("[FGO Guard] state jumped %.0f m from SPP init, fallback (solver divergence)", jump);
+            state_array[last][0] = spp_init.x();
+            state_array[last][1] = spp_init.y();
+            state_array[last][2] = spp_init.z();
+            return true;
+        }
+        return false;
+    }
+
+    // 根据优化结果更新载波相位变化残差 (dop_cp, 单位: 米, 与 psr 残差量纲统一)
+    // 残差 = λ × [Δcp + doppler_mean·Δt] —— 载波相位与该星多普勒积分的相干性 (TDEC):
+    // 观测链路健康时为厘米级, 周跳表现为 λ 整数倍的跳变, 多径/跟踪退化时增大。
+    // 卫星运动与接收机钟漂均已含在 doppler 中, 故不依赖星历几何,
+    // 与 cycleSlipDetect 的 TDEC 周跳检验保持同一物理模型。
     void CPresidualsUpdate()
     {
         residuals.clear();
-        for (const auto &obs : gnss_raw_map[time_frame_now])
+        auto curr_obs_it = gnss_raw_map.find(time_frame_now);
+        if (curr_obs_it == gnss_raw_map.end())
+        {
+            return;
+        }
+        for (const auto &obs : curr_obs_it->second)
         {
             if (!obs) continue;
             int sat = static_cast<int>(obs->sat);
             residuals[sat] = std::map<std::string, double>({{"dop_cp", 0.0}});
         }
 
-        Eigen::Vector3d opt_vel = Eigen::Vector3d(doppler_map[time_frame_now].twist.twist.linear.x,
-                                                doppler_map[time_frame_now].twist.twist.linear.y,
-                                                doppler_map[time_frame_now].twist.twist.linear.z);
-        
-        for (const auto &obs : gnss_raw_map[time_frame_now])
+        auto prev_obs_it = gnss_raw_map.find(time_frame_last);
+        if (prev_obs_it == gnss_raw_map.end())
+        {
+            return;
+        }
+        const auto curr_sv_it = sv_info_window_map.find(time_frame_now);
+        if (curr_sv_it == sv_info_window_map.end())
+        {
+            return;
+        }
+
+        for (const auto &obs : curr_obs_it->second)
         {
             if (!obs) continue;
-            int sat = static_cast<int>(obs->sat);
+            const int sat = static_cast<int>(obs->sat);
+
             int l1_idx = -1;
             L1_freq(obs, &l1_idx);
-            double obs_cp = obs->cp[l1_idx];
-            sv_info& sat_info = sv_info_map[sat];
-            // 载波相位变化残差
-            if(measSize < 2)
+            if (l1_idx < 0 ||
+                l1_idx >= static_cast<int>(obs->cp.size()) ||
+                l1_idx >= static_cast<int>(obs->dopp.size()))
             {
                 continue;
             }
-            else
+            const double curr_cp_cycle = obs->cp[l1_idx];
+            const double dopp_curr = obs->dopp[l1_idx];
+            const double curr_time_sec = obs->time.time + obs->time.sec;
+
+            // 上一历元同卫星的 L1 载波相位与多普勒
+            double prev_cp_cycle = 0.0, dopp_prev = 0.0, prev_time_sec = 0.0;
+            bool prev_found = false;
+            for (const auto &prev_obs : prev_obs_it->second)
             {
-                double curr_cp_cycle = obs->cp[l1_idx];
-                double prev_cp_cycle = 0.0;
-                for(int i = 0;i<gnss_raw_map[time_frame_last].size();i++)
+                if (prev_obs && static_cast<int>(prev_obs->sat) == sat)
                 {
-                    if(gnss_raw_map[time_frame_last][i]->sat == sat)
+                    int prev_l1_idx = -1;
+                    L1_freq(prev_obs, &prev_l1_idx);
+                    if (prev_l1_idx >= 0 &&
+                        prev_l1_idx < static_cast<int>(prev_obs->cp.size()) &&
+                        prev_l1_idx < static_cast<int>(prev_obs->dopp.size()))
                     {
-                        int prev_l1_idx = -1;
-                        L1_freq(gnss_raw_map[time_frame_last][i], &prev_l1_idx);
-                        if(prev_l1_idx >= 0)
-                        {
-                            prev_cp_cycle = gnss_raw_map[time_frame_last][i]->cp[prev_l1_idx];
-                        }
+                        prev_cp_cycle = prev_obs->cp[prev_l1_idx];
+                        dopp_prev = prev_obs->dopp[prev_l1_idx];
+                        prev_time_sec = prev_obs->time.time + prev_obs->time.sec;
+                        prev_found = true;
                     }
+                    break;
                 }
-                if(prev_cp_cycle == 0.0)
-                {
-                    continue;
-                }
-                ROS_INFO("Satellite %d: delta=%.3f cycles, const=%.3f cycles", sat, (curr_cp_cycle - prev_cp_cycle), sat_cp_const_l1[sat]);
-                double delta_cp_obs = (curr_cp_cycle - prev_cp_cycle) - sat_cp_const_l1[sat];
-                double doppler_move = (time_frame_now - time_frame_last)*0.1*opt_vel.norm();
-                double dop_cp_residual = delta_cp_obs - doppler_move;
-                residuals[sat]["dop_cp"] = dop_cp_residual;
+            }
+            if (!prev_found || prev_cp_cycle == 0.0 || curr_cp_cycle == 0.0)
+            {
+                continue;
+            }
+            const double dt_sec = curr_time_sec - prev_time_sec;
+            if (!std::isfinite(dt_sec) || dt_sec <= 0.0)
+            {
+                continue;
+            }
+
+            const auto lam_it = curr_sv_it->second.find(sat);
+            if (lam_it == curr_sv_it->second.end())
+            {
+                continue;
+            }
+            const double lamda_l1 = lam_it->second.lamda_l1;
+            if (!std::isfinite(lamda_l1) || lamda_l1 <= 0.0)
+            {
+                continue;
+            }
+
+            const double resid_cycles = (curr_cp_cycle - prev_cp_cycle) + 0.5 * (dopp_curr + dopp_prev) * dt_sec;
+            const double dop_cp_residual_m = lamda_l1 * resid_cycles;
+            if (std::isfinite(dop_cp_residual_m) && std::abs(dop_cp_residual_m) < 1e4)
+            {
+                residuals[sat]["dop_cp"] = dop_cp_residual_m;
             }
         }
     }
-
     // 输出ENU结果估计的协方差
     bool printLatestPosCovarianceENU(Eigen::Vector3d& result_enu) const
     {

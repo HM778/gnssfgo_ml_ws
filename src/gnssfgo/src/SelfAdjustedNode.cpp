@@ -55,6 +55,11 @@ public:
 
         nh.param<bool>("same_time_weight", SAME_TIME_WEIGHT, false);
         nh.param<bool>("same_reliable", SAME_RELIABLE, false);
+
+        // 均匀频率输出: launch 参数 output_rate_hz (Hz), 上限 20
+        double output_rate_hz = 1.0;
+        nh.param<double>("output_rate_hz", output_rate_hz, 1.0);
+        StartOutputThread(output_rate_hz);
         
         ROS_ERROR("Set time_dicount/reliable method: %d / %d", SAME_TIME_WEIGHT,SAME_RELIABLE);
 
@@ -152,14 +157,18 @@ public:
 #ifdef ENABLE_TRANSFORMER_BRIDGE
                         if (osqa_enabled)
                         {
+                            // 使用带 time_frame 匹配的读取重载:
+                            // OSQA 处理存在滞后, 盲取最后一行会把评分套到错误的历元上;
+                            // 精确匹配失败时回退到 60s 内最近的历元。
                             std::map<int, transformer_bridge::SatQualityInfo> quality_scores =
-                                transformer_bridge::readLatestQualityScores(osqa_output_path);
+                                transformer_bridge::readLatestQualityScores(
+                                    osqa_output_path, factor_graph.time_frame_now);
                             if (!quality_scores.empty())
                             {
                                 std::map<int, double> simple_scores;
                                 for (const auto &kv : quality_scores)
                                 {
-                                    simple_scores[kv.first] = kv.second.quality;
+                                    simple_scores[kv.first] = kv.second.quality;  //只使用了融合后的质量评分
                                 }
                                 factor_graph.setQualityScores(simple_scores);
                                 factor_graph.osqa_quality_threshold_ = osqa_quality_threshold;
@@ -200,6 +209,9 @@ public:
                             local_options.num_linear_solver_threads = 1;
                         }
                         ceres::Solve(local_options, &factor_graph.problem, &factor_graph.summary);
+                        // 发散防护: 个别历元求解器会收敛到公里级错误盆地
+                        // (观测到与接收机钟跳步相关的约束重构), 回退为 SPP 初值
+                        factor_graph.guardLatestStateAgainstDivergence(init_pos_ecef);
                         // factor_graph.solveFloatAmbiguity();
                         factor_graph.saveGraphStateToVector(true);
                         factor_graph.CPresidualsUpdate();
@@ -546,10 +558,14 @@ public:
                 observations, epoch_ephems, receiver_ecef, true, iono_params);
 
         // ---- 计算后验残差 ----
+        // 只保留 L1: buildCorrectedPseudorangeMeasurements 对每颗卫星依次 push L1/L2
+        // 两条测量, 若不做过滤 map 会被 L2 残差覆盖, 与 "psr_residual_l1" 标签不符。
+        // 所有残差统一量纲为米。
         std::map<int, double> psr_residual_map;
         for (const auto &m : corrected)
         {
             if (!m.valid || m.sat_sys == "Unknown") continue;
+            if (m.freq != 1) continue;
 
             int sat = m.sat;
             double geo_range = (receiver_ecef - m.sat_pos).norm();
@@ -577,20 +593,24 @@ public:
             }
         }
 
-        // ---- 因子残差 (占位, TR DD CP/PR 留待后续细化) ----
-        // todo 2026-8-13 因周跳未参与优化的因子残差，需要填充为0，在学习时过滤
+        // ---- 因子残差 (量纲统一为米: psr 伪距后验残差 / dop_cp 载波相位变化残差) ----
+        // TR DD PR/CP 双差残差无法计算, 已在导出与分析侧停用。
         std::map<int, std::map<std::string, double>> factor_residuals;
         for (const auto &obs : observations)
         {
             if (!obs) continue;
-            int sat = static_cast<int>(obs->sat);
+            const int sat = static_cast<int>(obs->sat);
             std::map<std::string, double> res;
-            res["dop_cp"] = 0.0;
-            res = factor_graph.residuals[sat];
-            res["psr"] = psr_residual_map[sat];
-            ROS_INFO("sat %d psr_residual %f", sat, res["psr"]);
-            ROS_INFO("sat %d dop_cp %f", sat, res["dop_cp"]);
-
+            auto fg_res_it = factor_graph.residuals.find(sat);
+            if (fg_res_it != factor_graph.residuals.end())
+            {
+                res = fg_res_it->second;
+            }
+            auto psr_it = psr_residual_map.find(sat);
+            if (psr_it != psr_residual_map.end())
+            {
+                res["psr"] = psr_it->second;
+            }
             factor_residuals[sat] = res;
         }
 
@@ -617,6 +637,7 @@ public:
 
     ~SelfAdjustedTR()
     {
+        StopOutputThread();
         freeSpinner();
         if (optimizationThread.joinable()) optimizationThread.join();
         saveEphems();

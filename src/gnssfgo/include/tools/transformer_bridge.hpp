@@ -292,8 +292,10 @@ inline void updateQualityCacheFromFile(const std::string &filepath, QualityFileC
  * @param sv_info_map        卫星信息映射 (PRN → sv_info)
  * @param lock_count_l1      L1 连续锁定计数 (PRN → count)
  * @param lock_count_l2      L2 连续锁定计数 (PRN → count)
- * @param psr_residual_map   SPP 伪距残差 (PRN → residual_m)
- * @param factor_residuals   因子残差 (PRN → {psr, doppler, tr_dd_pr, tr_dd_cp})
+ * @param psr_residual_map   SPP 伪距残差 (PRN → residual_m, 米)
+ * @param factor_residuals   因子残差 (PRN → {psr, dop_cp}), psr/dop_cp 均为米:
+ *                           psr 为伪距后验残差, dop_cp 为载波相位变化残差
+ *                           (TR DD PR/CP 双差残差无法计算, 已停用)
  * @return                   写入成功返回 true
  */
 inline bool exportEpochData(
@@ -325,7 +327,8 @@ inline bool exportEpochData(
         }
 
         const int sat = static_cast<int>(obs->sat);
-        const int sys = gnss_comm::satsys(sat, nullptr);
+        uint32_t sat_prn = 0;
+        const int sys = gnss_comm::satsys(sat, &sat_prn);
 
         // 卫星系统名称
         std::string sys_name = "Unknown";
@@ -334,12 +337,14 @@ inline bool exportEpochData(
         else if (sys == SYS_GAL) sys_name = "Galileo";
         else if (sys == SYS_BDS) sys_name = "BeiDou";
 
-        // PRN 字符串 (如 "G05")
+        // PRN 字符串 (如 "G05"): 使用系统内真实 PRN (satsys 反解)。
+        // 不能用 sat % 100: BeiDou 的 sat_id 在 98-160, 取模会丢失百位
+        // (如 sat 119/BDS prn22 被记成 "C19"), OSQA 反推 sat_id 会套错卫星。
         char prn_buf[16];
         std::snprintf(prn_buf, sizeof(prn_buf), "%c%02d",
                       (sys == SYS_GPS ? 'G' : sys == SYS_GLO ? 'R' :
                        sys == SYS_GAL ? 'E' : sys == SYS_BDS ? 'C' : '?'),
-                      sat % 100);
+                      static_cast<int>(sat_prn));
         std::string prn_str(prn_buf);
 
         // 频率索引
@@ -419,23 +424,20 @@ inline bool exportEpochData(
         j_sat["psr_residual_l1"] = (psr_res_it != psr_residual_map.end())
             ? psr_res_it->second : 0.0;
 
-        // 因子残差 (优化后)
+        // 因子残差 (优化后, 量纲统一为米)
         auto fac_it = factor_residuals.find(sat);
         if (fac_it != factor_residuals.end())
         {
             const auto &res = fac_it->second;
             auto psr_it = res.find("psr");
             j_sat["psr_factor_residual"] = (psr_it != res.end()) ? psr_it->second : 0.0;
-            auto tr_pr_it = res.find("tr_dd_pr");
-            j_sat["tr_dd_pr_residual"] = (tr_pr_it != res.end()) ? tr_pr_it->second : 0.0;
-            auto tr_cp_it = res.find("tr_dd_cp");
-            j_sat["tr_dd_cp_residual"] = (tr_cp_it != res.end()) ? tr_cp_it->second : 0.0;
+            auto dop_cp_it = res.find("dop_cp");
+            j_sat["dop_cp_factor_residual"] = (dop_cp_it != res.end()) ? dop_cp_it->second : 0.0;
         }
         else
         {
             j_sat["psr_factor_residual"] = 0.0;
-            j_sat["tr_dd_pr_residual"] = 0.0;
-            j_sat["tr_dd_cp_residual"] = 0.0;
+            j_sat["dop_cp_factor_residual"] = 0.0;
         }
 
         satellites.push_back(j_sat);

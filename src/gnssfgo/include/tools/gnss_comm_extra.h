@@ -256,50 +256,23 @@ namespace gnss_comm_extra{
 
     /* get variance for carrier-phase from a single satellite based on elevation/SNR */
     // 无论传入L1还是L2的观测数据，它都使用同一套经验模型和相同的固定参数来计算方差。
+    /* TDCP 单差观测标准差模型 (米): 历元间载波相位差分的噪声
+     * a: 天顶方向基线 (相位噪声 + 多普勒积分误差, ~1cm)
+     * b/sin(el): 低仰角多径与大气残差放大 (15° 时约 4cm)
+     * 返回值直接作为 TRDDCP 因子的 σ (米), 与伪距因子 (σ≈1.4m) 量纲统一 */
     double getVarofCp_ele_SNR(gnss_comm::ObsPtr single_sat_data,std::map<int,sv_info> sv_info_map)
     {
-        Eigen::Matrix<double,4,1> parameters;
-        parameters<<50.0, 30.0, 30.0, 10.0; // loosely coupled 
-        double snr_1 = parameters(0); // T = 50
-        double snr_A = parameters(1); // A = 30
-        double snr_a = parameters(2);// a = 30
-        double snr_0 = parameters(3); // F = 10
-        const double snr_R = (!single_sat_data || single_sat_data->CN0.empty())
-            ? std::numeric_limits<double>::quiet_NaN()
-            : single_sat_data->CN0[0];  //统一频段
-
+        constexpr double a = 0.01;
+        constexpr double b = 0.01;
         const auto it = sv_info_map.find(int(single_sat_data->sat));
         const double elR = (it == sv_info_map.end())
-            ? std::numeric_limits<double>::quiet_NaN()
+            ? M_PI / 4.0
             : it->second.elevation; // radians
-
-        // if(elR<15) elR = 30;
-        if(std::isfinite(elR) && elR < (15.0 * D2R))
-        {
-        // LOG(INFO) << "satellite elevation -> " << elR;
-        }
-
-        const double sin_el = std::sin(elR);
-        const double sin_el2 = sin_el * sin_el;
-        const double q_R_1 = (sin_el2 > 1e-12) ? (1.0 / sin_el2) : 1e12;
-        const double q_R_2 = std::pow(10.0, (-(snr_R - snr_1) / snr_a));
-        const double denom = (std::pow(10.0, (-(snr_0 - snr_1) / snr_a)) - 1.0);
-        const double q_R_3 = (((denom != 0.0) ? (snr_A / denom / (snr_0 - snr_1)) : 0.0) * (snr_R - snr_1) + 1.0);
-        const double q_R = q_R_1 * (q_R_2 * q_R_3);
-        const double var = (q_R > 1e-12) ? (1.0 / q_R) : 1e12; // larger -> larger uncertainty
-
-        double a = 0.01; 
-        double b = 0.01;
-        double c = 0;
-        double d = 0;
-        const double sin_el2_d2 = sin_el2 > 1e-12 ? sin_el2 : 1e-12;
-        const double var_ele = pow(a,2) + pow(b,2) / sin_el2_d2 + pow(c,2) + pow(d,2);
-        // return 0.004;
-        #if useEleVar
-        return sqrt(var_ele);
-        #else 
-        return 0.0001 * std::sqrt(1.0/var);
-        #endif 
+        const double sin_el2_d2 = std::isfinite(elR)
+            ? std::max(std::sin(elR) * std::sin(elR), 1e-4)
+            : 1.0;
+        const double var_ele = a * a + b * b / sin_el2_d2;
+        return std::sqrt(var_ele);
     }
 
 };

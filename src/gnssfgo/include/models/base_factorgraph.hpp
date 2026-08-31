@@ -283,7 +283,9 @@ public:
         // Keep solver deterministic and avoid any thread-safety surprises.
         options.num_threads = 1;
         options.num_linear_solver_threads = 1;
-        options.max_num_iterations = 50;
+        // 滑窗问题为热启动(上一历元解作为初值), 通常数次迭代即收敛;
+        // 50 次上限会使个别困难历元求解 300ms+ 挤占下一历元处理窗口
+        options.max_num_iterations = 20;
         // options.max_solver_time_in_seconds = 0.04;      // 绝对禁止超过40ms
         return true;
     }
@@ -790,10 +792,11 @@ public:
                 double var_z = confidence_from_cov(iterdopp->second.twist.covariance[2]);
 
                 // OSQA Transformer 质量评分集成: 多普勒因子权重按 epoch 平均卫星质量缩放
-                // 低质量卫星多 → avg_quality 低 → var 增大 → 多普勒约束减弱
+                // var_vec 在因子内作为乘性置信度 (clamp 到 ≤1), 低质量卫星多 → avg_quality 低
+                // → 置信度按比例下降 → 多普勒约束减弱 (原实现取倒数, 方向相反)
 #ifdef ENABLE_TRANSFORMER_BRIDGE
                 double avg_quality = computeEpochAvgQuality(iterdopp->first);
-                double quality_scale = 1.0 / std::max(avg_quality, 0.1);  // 限制最大放大倍数为10
+                double quality_scale = std::max(avg_quality, 0.1);
                 var_x *= quality_scale;
                 var_y *= quality_scale;
                 var_z *= quality_scale;

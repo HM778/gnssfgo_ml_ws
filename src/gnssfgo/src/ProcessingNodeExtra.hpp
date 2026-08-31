@@ -80,6 +80,20 @@ public:
 
     std::atomic<bool> hasNewData{false};
 
+    // ── 均匀频率输出: 独立线程按 output_rate_hz 定频发布最新解,
+    //    与优化耗时/回调负载解耦, 消除 rviz 观测到的输出间隔不均 ──
+    std::thread output_thread_;
+    std::mutex m_output_mux_;
+    double output_rate_hz_ = 1.0;
+    bool deferred_output_ = false;
+    bool output_thread_running_ = false;
+    Eigen::Vector3d out_wls_enu_ = Eigen::Vector3d::Zero();
+    Eigen::Vector3d out_wls_llh_ = Eigen::Vector3d::Zero();
+    Eigen::Vector3d out_fgo_enu_ = Eigen::Vector3d::Zero();
+    Eigen::Vector3d out_fgo_llh_ = Eigen::Vector3d::Zero();
+    bool out_wls_valid_ = false;
+    bool out_fgo_valid_ = false;
+
     // ── CPU optimization: condition variable + pre-allocated buffers ──
     std::condition_variable cv_new_data_;
     std::mutex cv_wait_mutex_;
@@ -420,19 +434,28 @@ public:
 
         if (pos_ok)
         {
-            sensor_msgs::NavSatFix llh_msg;
-            llh_msg.header.frame_id = "map";
-            llh_msg.latitude  = pos_llh(0);
-            llh_msg.longitude = pos_llh(1);
-            llh_msg.altitude  = pos_llh(2);
-            pub_psr_llh_latest.publish(llh_msg);
+            {
+                std::lock_guard<std::mutex> lk(m_output_mux_);
+                out_wls_llh_ = pos_llh;
+                out_wls_enu_ = pos_enu;
+                out_wls_valid_ = true;
+            }
+            if (!deferred_output_)
+            {
+                sensor_msgs::NavSatFix llh_msg;
+                llh_msg.header.frame_id = "map";
+                llh_msg.latitude  = pos_llh(0);
+                llh_msg.longitude = pos_llh(1);
+                llh_msg.altitude  = pos_llh(2);
+                pub_psr_llh_latest.publish(llh_msg);
 
-            nav_msgs::Odometry enu_msg;
-            enu_msg.header.frame_id = "map";
-            enu_msg.pose.pose.position.x = pos_enu(0);
-            enu_msg.pose.pose.position.y = pos_enu(1);
-            enu_msg.pose.pose.position.z = pos_enu(2);
-            pub_psr_enu_latest.publish(enu_msg);
+                nav_msgs::Odometry enu_msg;
+                enu_msg.header.frame_id = "map";
+                enu_msg.pose.pose.position.x = pos_enu(0);
+                enu_msg.pose.pose.position.y = pos_enu(1);
+                enu_msg.pose.pose.position.z = pos_enu(2);
+                pub_psr_enu_latest.publish(enu_msg);
+            }
 
             printf("\033[1;32mCURRENT POS | [%.8f, %.8f, %.3f]| VEL:[%.2f, %.2f, %.2f]\033[0m \n",
                    pos_llh(0), pos_llh(1), pos_llh(2), vel_xyz(0), vel_xyz(1), vel_xyz(2));
@@ -654,6 +677,13 @@ public:
 
     void update_fgo_enu(double e, double n, double h)
     {
+        {
+            std::lock_guard<std::mutex> lk(m_output_mux_);
+            out_fgo_enu_ = Eigen::Vector3d(e, n, h);
+            out_fgo_valid_ = true;
+        }
+        if (deferred_output_) return;   // 由均匀频率输出线程发布
+
         nav_msgs::Odometry fgo_enu_msg;
         fgo_enu_msg.header.frame_id = "map";
         fgo_enu_msg.pose.pose.position.x = e;
@@ -664,6 +694,13 @@ public:
 
     void update_fgo_llh(double lat, double lon, double alt)
     {
+        {
+            std::lock_guard<std::mutex> lk(m_output_mux_);
+            out_fgo_llh_ = Eigen::Vector3d(lat, lon, alt);
+            out_fgo_valid_ = true;
+        }
+        if (deferred_output_) return;
+
         sensor_msgs::NavSatFix fgo_llh_msg;
         fgo_llh_msg.header.frame_id = "map";
         fgo_llh_msg.latitude = lat;
@@ -671,6 +708,80 @@ public:
         fgo_llh_msg.altitude = alt;
         printf("\033[1;32m   FGO LLH  | [%.8f, %.8f, %.3f]\033[0m | ", lat, lon, alt);
         pub_fgo_llh_latest.publish(fgo_llh_msg);
+    }
+
+    // ── 均匀频率输出线程: 每周期重发最新的 SPP 与 FGO 解 (零阶保持)。
+    //    rate_hz 由 launch 参数 output_rate_hz 配置, 上限 20 Hz。
+    void StartOutputThread(double rate_hz)
+    {
+        output_rate_hz_ = std::min(std::max(rate_hz, 0.1), 20.0);
+        deferred_output_ = true;
+        output_thread_running_ = true;
+        output_thread_ = std::thread(&ProcessingNodeExtra::OutputLoop, this);
+        ROS_INFO("[Output] uniform-rate publisher started: %.1f Hz (max 20 Hz)", output_rate_hz_);
+    }
+
+    void StopOutputThread()
+    {
+        output_thread_running_ = false;
+        if (output_thread_.joinable())
+        {
+            output_thread_.join();
+        }
+    }
+
+    void OutputLoop()
+    {
+        const auto period = std::chrono::duration<double>(1.0 / output_rate_hz_);
+        auto next = std::chrono::steady_clock::now();
+        while (ros::ok() && output_thread_running_)
+        {
+            next += std::chrono::duration_cast<std::chrono::steady_clock::duration>(period);
+            Eigen::Vector3d wllh, wenu, fllh, fenu;
+            bool wv, fv;
+            {
+                std::lock_guard<std::mutex> lk(m_output_mux_);
+                wllh = out_wls_llh_; wenu = out_wls_enu_; wv = out_wls_valid_;
+                fllh = out_fgo_llh_; fenu = out_fgo_enu_; fv = out_fgo_valid_;
+            }
+            if (wv)
+            {
+                sensor_msgs::NavSatFix llh_msg;
+                llh_msg.header.frame_id = "map";
+                llh_msg.header.stamp = ros::Time::now();
+                llh_msg.latitude  = wllh.x();
+                llh_msg.longitude = wllh.y();
+                llh_msg.altitude  = wllh.z();
+                pub_psr_llh_latest.publish(llh_msg);
+
+                nav_msgs::Odometry enu_msg;
+                enu_msg.header.frame_id = "map";
+                enu_msg.header.stamp = ros::Time::now();
+                enu_msg.pose.pose.position.x = wenu.x();
+                enu_msg.pose.pose.position.y = wenu.y();
+                enu_msg.pose.pose.position.z = wenu.z();
+                pub_psr_enu_latest.publish(enu_msg);
+            }
+            if (fv)
+            {
+                sensor_msgs::NavSatFix fgo_llh_msg;
+                fgo_llh_msg.header.frame_id = "map";
+                fgo_llh_msg.header.stamp = ros::Time::now();
+                fgo_llh_msg.latitude  = fllh.x();
+                fgo_llh_msg.longitude = fllh.y();
+                fgo_llh_msg.altitude  = fllh.z();
+                pub_fgo_llh_latest.publish(fgo_llh_msg);
+
+                nav_msgs::Odometry fgo_enu_msg;
+                fgo_enu_msg.header.frame_id = "map";
+                fgo_enu_msg.header.stamp = ros::Time::now();
+                fgo_enu_msg.pose.pose.position.x = fenu.x();
+                fgo_enu_msg.pose.pose.position.y = fenu.y();
+                fgo_enu_msg.pose.pose.position.z = fenu.z();
+                pub_fgo_enu_latest.publish(fgo_enu_msg);
+            }
+            std::this_thread::sleep_until(next);
+        }
     }
 
     bool gpsTimeValid(double time)

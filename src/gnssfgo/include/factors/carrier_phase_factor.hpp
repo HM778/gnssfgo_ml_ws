@@ -111,19 +111,26 @@ struct TRDDCPFactor
         // 双差载波相位-观测值
         T dd_cp = (curr_i_cp - prev_i_cp) - (curr_master_cp - prev_master_cp);
 
-        // 载波相位观测的方差计算，用于求因子权重
+        // 载波相位观测的标准差计算，用于求因子权重
+        // TDCP 单差 σ 由高程模型给出 (天顶 ~1.4cm, 15° ~4cm);
+        // 双差由 4 个独立单差观测平方传播 → ≈ 2× 单差, 与伪距因子同为米量纲
         double sigma_prev_master = 0.0, sigma_prev_i = 0.0, sigma_curr_master = 0.0, sigma_curr_i = 0.0;
         sigma_prev_master = trddcp_sigma(dd_measurement.r_master_SV, reference_sv_info_map);
         sigma_prev_i      = trddcp_sigma(dd_measurement.r_iSV, reference_sv_info_map);
         sigma_curr_master = trddcp_sigma(dd_measurement.u_master_SV, current_sv_info_map);
         sigma_curr_i      = trddcp_sigma(dd_measurement.u_iSV, current_sv_info_map);
-        
-        // TODO：修改权重计算策略
-        const double average_sigma = (sigma_prev_master + sigma_prev_i + sigma_curr_master + sigma_curr_i) / 4.0;
-        const double sigma = std::max(0.20, average_sigma);
-        if(0)
+
+        const double sigma_dd = std::sqrt(sigma_prev_master * sigma_prev_master +
+                                          sigma_prev_i * sigma_prev_i +
+                                          sigma_curr_master * sigma_curr_master +
+                                          sigma_curr_i * sigma_curr_i);
+        // 10cm 下限: 吸收亚阈值周跳残留与载波多径爆发, 抑制收敛段瞬态;
+        // 相比旧实现 (0.20m 下限 + 简单平均) TDCP 仍有约 2 倍权重
+        const double sigma = std::max(0.10, sigma_dd);
+
+        if(1)
         {
-            T x = T(sqrt_info - 0.5) * 10.0;  // 0→-5, 0.5→0, 1→5
+            T x = T(sqrt_info - 0.09) * 10.0;  // 0→-5, 0.5→0, 1→5
             T sigmoid = 1.0 / (1.0 + exp(-x));
             // 再映射到 [1, 1000]
             T conf = 1.0 + sigmoid * 999.0;
