@@ -101,6 +101,71 @@ public:
     int last_added_doppler_factor_count = 0;
     int max_psr_factors_per_epoch_ = 12;
 
+    /* ===== 因子权重/后验残差诊断 =====
+     * 每次构建因子图时登记各因子的 double 上下文权重与参数块指针,
+     * 求解后用 CostFunction::Evaluate(参数为 double, 非 ceres::Jet) 取真实后验残差。
+     * 因子内部(autodiff operator())的 printf 打印的是 Jet 类型, 属未定义行为,
+     * 输出与真实残差无关, 不要以它为诊断依据。 */
+    struct PostFitEntry
+    {
+        std::string tag;    // 因子类型: PSR / DOPPLER / DDPR / TDCP
+        std::string label;  // 具体标识(卫星对/卫星号+权重), 详细转储时打印
+        ceres::CostFunction *cost = nullptr;  // 非拥有指针, 生命周期同 problem
+        std::vector<double *> params;
+    };
+    std::vector<PostFitEntry> postfit_entries_;
+    int postfit_log_epoch_ = 0;
+
+    // 因子的后验残差记录
+    void registerPostFitFactor(const std::string &tag, const std::string &label,
+                               ceres::CostFunction *cost, std::vector<double *> params)
+    {
+        postfit_entries_.push_back({tag, label, cost, std::move(params)});
+    }
+
+    void clearPostFitFactors() { postfit_entries_.clear(); }
+
+    // 求解后按因子类型汇总真实后验残差(即 ceres 优化所见的加权残差)。
+    // 每 postfit_verbose_interval_ 次求解额外转储逐因子残差。
+    void logPostFitResidualSummary()
+    {
+        const bool verbose = (postfit_log_epoch_ % postfit_verbose_interval_) == 0;
+        ++postfit_log_epoch_;
+
+        struct Agg { int n = 0; double sum = 0.0, mx = 0.0; };
+        std::map<std::string, Agg> agg;
+        for (const auto &e : postfit_entries_)
+        {
+            if (e.cost == nullptr) continue;
+            std::vector<double> res(static_cast<size_t>(e.cost->num_residuals()), 0.0);
+            if (!e.cost->Evaluate(e.params.data(), res.data(), nullptr))
+            {
+                continue;
+            }
+            Agg &a = agg[e.tag];
+            for (const double r : res)
+            {
+                const double ar = std::abs(r);
+                a.n++;
+                a.sum += ar;
+                a.mx = std::max(a.mx, ar);
+            }
+            if (verbose)
+            {
+                printf("  [POST-FIT] %-7s %-34s |r|=%.4g\n", e.tag.c_str(), e.label.c_str(), std::abs(res[0]));
+            }
+        }
+        printf("[POST-FIT RESIDUALS] epoch#%d (weighted, at solved states)%s\n",
+               postfit_log_epoch_, verbose ? " --- detail ---" : "");
+        for (const auto &kv : agg)
+        {
+            printf("  %-7s n=%-4d |r| mean=%.4g max=%.4g\n",
+                   kv.first.c_str(), kv.second.n,
+                   kv.second.n > 0 ? kv.second.sum / kv.second.n : 0.0, kv.second.mx);
+        }
+    }
+    int postfit_verbose_interval_ = 100;
+
     /* latest GNSS-RTK solution with LAMBDA */
     Eigen::Matrix<double, 3,1> fixedStateGNSSRTK;
     Eigen::MatrixXd covMatrix;
@@ -314,8 +379,9 @@ public:
         return measSize;
     }
 
-    bool resetProblem() 
+    bool resetProblem()
     {
+        clearPostFitFactors();
         problem.~Problem();
         new (&problem) ceres::Problem(problem_options);
         summary = ceres::Solver::Summary();
@@ -806,6 +872,10 @@ public:
                                                         , state_size,state_size>(new
                                                         dopplerFactor(v_x_i, v_y_i, v_z_i, delta_t, var_vec));
                 problem.AddResidualBlock(doppler_function, loss_function, state_array[i],state_array[i+1]);
+                registerPostFitFactor("DOPPLER",
+                                      "epoch " + std::to_string(i) + "->" + std::to_string(i + 1),
+                                      doppler_function,
+                                      {state_array[i], state_array[i + 1]});
                 ++added_doppler_factor_count;
             }
         }
@@ -825,6 +895,7 @@ public:
         auto iter_pr = gnss_raw_map.begin();
         auto iter_ephem = ephems_map.begin();
         int added_pseudorange_factor_count = 0;
+        double psr_conf_min = 1e9, psr_conf_max = 0.0, psr_conf_sum = 0.0;
 
         for (int epoch_idx = 0; epoch_idx < length && iter_pr != gnss_raw_map.end(); ++epoch_idx, ++iter_pr)
         {
@@ -917,10 +988,24 @@ public:
                                                                     measurement->tro_delay_m
                                                                 ));
                 problem.AddResidualBlock(ps_function, loss_function, state_array[epoch_idx]);
+                // 权重量级诊断: pseudorangeFactor 对残差的乘性权重 conf = clamp(1/σ², 1e-3, 1)
+                const double psr_conf =
+                    std::max(1e-3, std::min(1.0, 1.0 / (PsrCandidates[i].effective_sigma * PsrCandidates[i].effective_sigma)));
+                psr_conf_min = std::min(psr_conf_min, psr_conf);
+                psr_conf_max = std::max(psr_conf_max, psr_conf);
+                psr_conf_sum += psr_conf;
+                registerPostFitFactor("PSR",
+                                      "sat " + std::to_string(measurement->sat) + " w=" + std::to_string(psr_conf),
+                                      ps_function,
+                                      {state_array[epoch_idx]});
                 ++added_pseudorange_factor_count;
             }
         }
-        printf("[  PSR   FACTOR] Added %d .\n", added_pseudorange_factor_count);
+        printf("[  PSR   FACTOR] Added %d | weight(1/m): min=%.3g max=%.3g mean=%.3g\n",
+               added_pseudorange_factor_count,
+               added_pseudorange_factor_count > 0 ? psr_conf_min : 0.0,
+               psr_conf_max,
+               added_pseudorange_factor_count > 0 ? psr_conf_sum / added_pseudorange_factor_count : 0.0);
         last_added_psr_factor_count = added_pseudorange_factor_count;
         return true;
     }

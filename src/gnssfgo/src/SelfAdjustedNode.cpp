@@ -130,6 +130,8 @@ public:
                 if(has_new_data)
                 {
                     OptTime.tic();
+                    double solve_move_m = 0.0;  // 本轮优化对最新状态的实际改动量
+                    double spp_gap_m = 0.0;     // 发布解与 SPP 初值的偏差
 
                     Eigen::Matrix<double, 3, 1> init_pos_ecef;
                     Eigen::Vector3d ref_llh;
@@ -199,7 +201,12 @@ public:
                         factor_graph.addDopplerFactors();
                         factor_graph.addPsrFactors();
 
-                        factor_graph.addTRDDCPFactors();
+                        // factor_graph.addTRDDCPFactors();
+
+                        // 求解前最新状态初值, 用于衡量本轮优化对解的实际改动量
+                        const Eigen::Vector3d pre_solve_pos(factor_graph.state_array[factor_graph.measSize - 1][0],
+                                                            factor_graph.state_array[factor_graph.measSize - 1][1],
+                                                            factor_graph.state_array[factor_graph.measSize - 1][2]);
 
                         ceres::Solver::Options local_options = factor_graph.options;
                         if (factor_graph.measSize <= 2)
@@ -209,12 +216,19 @@ public:
                             local_options.num_linear_solver_threads = 1;
                         }
                         ceres::Solve(local_options, &factor_graph.problem, &factor_graph.summary);
+                        const Eigen::Vector3d solved_pos(factor_graph.state_array[factor_graph.measSize - 1][0],
+                                                         factor_graph.state_array[factor_graph.measSize - 1][1],
+                                                         factor_graph.state_array[factor_graph.measSize - 1][2]);
+                        solve_move_m = (solved_pos - pre_solve_pos).norm();
                         // 发散防护: 个别历元求解器会收敛到公里级错误盆地
                         // (观测到与接收机钟跳步相关的约束重构), 回退为 SPP 初值
                         factor_graph.guardLatestStateAgainstDivergence(init_pos_ecef);
+                        spp_gap_m = (factor_graph.getLatestPosECEF() - init_pos_ecef).norm();
                         // factor_graph.solveFloatAmbiguity();
                         factor_graph.saveGraphStateToVector(true);
                         factor_graph.CPresidualsUpdate();
+                        // 真实后验残差汇总 (double 评估, 区别于因子内 Jet 误打印)
+                        factor_graph.logPostFitResidualSummary();
 
                         // ===== OSQA Transformer 数据导出 =====
                         // 在优化完成后，将所有预处理数据和因子残差导出到 JSONL 文件
@@ -268,6 +282,9 @@ public:
                            factor_graph.last_added_psr_factor_count,
                            factor_graph.last_added_doppler_factor_count,
                            run_time);
+                    printf("[ OPT EFFECT] cost %.4g -> %.4g | |Δpos_solve|=%.4f m | FGO-SPP gap=%.4f m\n",
+                           factor_graph.summary.initial_cost, factor_graph.summary.final_cost,
+                           solve_move_m, spp_gap_m);
                 }
             }
             // ros::Duration(0.005).sleep();

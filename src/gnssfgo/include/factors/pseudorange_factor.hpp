@@ -104,6 +104,36 @@ struct DDPseudorangeFactor
           reference_sv_info_map(std::move(reference_sv_info_map)),
           out_conf(out_conf), freq_idx(freq_idx) {}
 
+    // 双差伪距观测 σ (米): 4 个单差 psr_std 平方和开根, 单个缺失/非法时取 3.0。
+    // 静态方法, 供因子内部与因子图权重日志共用, 保证两边数值一致。
+    static double ddPrSigma(const DDMeasurement &m, int freq)
+    {
+        auto resolve_idx = [freq](const gnss_comm::ObsPtr &obs) -> int {
+            int idx = -1;
+            if (freq == 1)
+            {
+                L1_freq(obs, &idx);
+            }
+            else
+            {
+                L2_freq(obs, &idx);
+            }
+            return idx;
+        };
+        auto obs_sigma = [](const gnss_comm::ObsPtr &obs, int freq_idx) -> double {
+            if (!obs || freq_idx < 0 || freq_idx >= static_cast<int>(obs->psr_std.size()) || obs->psr_std[freq_idx] <= 0.0)
+            {
+                return 3.0;
+            }
+            return obs->psr_std[freq_idx];
+        };
+        const double s_rm = obs_sigma(m.r_master_SV, resolve_idx(m.r_master_SV));
+        const double s_ri = obs_sigma(m.r_iSV, resolve_idx(m.r_iSV));
+        const double s_um = obs_sigma(m.u_master_SV, resolve_idx(m.u_master_SV));
+        const double s_ui = obs_sigma(m.u_iSV, resolve_idx(m.u_iSV));
+        return std::max(1e-3, std::sqrt(s_rm * s_rm + s_ri * s_ri + s_um * s_um + s_ui * s_ui));
+    }
+
     template <typename T>
     bool operator()(const T* prev_state, const T* curr_state, T* residuals) const
     {
@@ -197,26 +227,11 @@ struct DDPseudorangeFactor
         const T dd_pr = (curr_i_pr - prev_i_pr) - (curr_master_pr - prev_master_pr);
 
         // 观测值的方差估计，基于伪距观测的标准差进行传播，假设观测误差独立且服从正态分布
-        auto obs_sigma = [](const gnss_comm::ObsPtr& obs, int freq_idx) -> double {
-            if (!obs || freq_idx < 0 || freq_idx >= static_cast<int>(obs->psr_std.size()) || obs->psr_std[freq_idx] <= 0.0)
-            {
-                return 3.0;
-            }
-            return obs->psr_std[freq_idx];
-        };
-
-        const double sigma_prev_master = obs_sigma(dd_measurement.r_master_SV, freq_idx_prev_master);
-        const double sigma_prev_i = obs_sigma(dd_measurement.r_iSV, freq_idx_prev_i);
-        const double sigma_curr_master = obs_sigma(dd_measurement.u_master_SV, freq_idx_curr_master);
-        const double sigma_curr_i = obs_sigma(dd_measurement.u_iSV, freq_idx_curr_i);
-        const double sigma = std::max(1e-3,
-            std::sqrt(sigma_prev_master * sigma_prev_master + sigma_prev_i * sigma_prev_i +
-                      sigma_curr_master * sigma_curr_master + sigma_curr_i * sigma_curr_i));
+        const double sigma = ddPrSigma(dd_measurement, freq_idx);
 
         const double bounded_out_conf = std::max(1e-3, std::min(1.0, out_conf));
         const double sqrt_info = bounded_out_conf / sigma;
         residuals[0] = (est_dd_pr - dd_pr) * T(sqrt_info);
-        // printf("sat_pair: %d & %d DDPR residuals: %f | confidence: %f |out_conf:%f \n",dd_measurement.u_master_SV->sat,dd_measurement.u_iSV->sat ,residuals[0], confidence,out_conf);
         return true;
     }
 

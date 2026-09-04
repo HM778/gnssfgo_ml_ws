@@ -129,6 +129,8 @@ public:
     {
         tr_measurments.clear();
         TRFactorCount = 0;
+        double cp_w_min = 1e9, cp_w_max = 0.0, cp_w_sum = 0.0;
+        double dd_w_min = 1e9, dd_w_max = 0.0, dd_w_sum = 0.0;
 
         if(measSize < 2)
         {
@@ -306,17 +308,46 @@ public:
             }
 #endif
 
+            // ---- 权重量级诊断 (公式与因子内部实现共用, 数值严格一致) ----
+            // TDCP: 残差 = 几何误差(m) × cp_weight, cp_weight = trddcpConfWeight(tr_score) ∈ [≈19, ≈993]
+            // DDPR: 残差 = 几何误差(m) × ddpr_sqrt_info, = clamp(out_conf,[1e-3,1]) / σ_dd (σ_dd 通常 3~6 m)
+            const double tr_score_i = tr_measurments[i].tr_score;
+            const double cp_weight = trddcpConfWeight(tr_score_i);
+            const double dd_sigma_i = DDPseudorangeFactor::ddPrSigma(tr_measurments[i], tr_measurments[i].freq_idx);
+            const double ddpr_sqrt_info = std::max(1e-3, std::min(1.0, dd_pr_conf)) / dd_sigma_i;
+            cp_w_min = std::min(cp_w_min, cp_weight);
+            cp_w_max = std::max(cp_w_max, cp_weight);
+            cp_w_sum += cp_weight;
+            dd_w_min = std::min(dd_w_min, ddpr_sqrt_info);
+            dd_w_max = std::max(dd_w_max, ddpr_sqrt_info);
+            dd_w_sum += ddpr_sqrt_info;
+            std::string pair_label = "pair?";
+            if (tr_measurments[i].u_master_SV && tr_measurments[i].u_iSV)
+            {
+                pair_label = std::to_string(tr_measurments[i].u_master_SV->sat) + "&" +
+                             std::to_string(tr_measurments[i].u_iSV->sat) +
+                             (tr_measurments[i].freq_idx == 1 ? " L1" : " L2") +
+                             " q=" + std::to_string(tr_score_i) +
+                             " w=" + std::to_string(cp_weight) +
+                             " ddq=" + std::to_string(dd_pr_conf) +
+                             " ddw=" + std::to_string(ddpr_sqrt_info);
+            }
+
             ceres::CostFunction* dd_pr_function =
             new ceres::AutoDiffCostFunction<DDPseudorangeFactor, 1, state_size, state_size>(
                 new DDPseudorangeFactor(tr_measurments[i], current_sv_info, reference_sv_info, dd_pr_conf, tr_measurments[i].freq_idx));
 
             problem.AddResidualBlock(dd_pr_function, loss_function, state_array[prev_epoch_index], state_array[epoch_index]);
-            
-            
+            registerPostFitFactor("DDPR", pair_label, dd_pr_function,
+                                  {state_array[prev_epoch_index], state_array[epoch_index]});
+
+
             ceres::CostFunction* dd_cp_function =
                 new ceres::AutoDiffCostFunction<TRDDCPFactor, 1, state_size, state_size>(
                     new TRDDCPFactor(tr_measurments[i], current_sv_info, reference_sv_info, tr_measurments[i].tr_score, tr_measurments[i].freq_idx));
             problem.AddResidualBlock(dd_cp_function, loss_function, state_array[prev_epoch_index], state_array[epoch_index]);
+            registerPostFitFactor("TDCP", pair_label, dd_cp_function,
+                                  {state_array[prev_epoch_index], state_array[epoch_index]});
         }
 
         // 因子信息统计
@@ -338,6 +369,11 @@ public:
         }
         printf("[ TRDDCP FACTOR] Added %d (G=%d R=%d E=%d C=%d | L1=%d L2=%d)\n",
                (int)tr_measurments.size(), cnt_gps, cnt_glo, cnt_gal, cnt_bds, cnt_l1, cnt_l2);
+        const int n_tr = static_cast<int>(tr_measurments.size());
+        printf("[ TR WEIGHTS] TDCP w(1/m): min=%.3g max=%.3g mean=%.3g | DDPR sqrt_info(1/m): min=%.3g max=%.3g mean=%.3g\n",
+               n_tr > 0 ? cp_w_min : 0.0, cp_w_max, n_tr > 0 ? cp_w_sum / n_tr : 0.0,
+               n_tr > 0 ? dd_w_min : 0.0, dd_w_max, n_tr > 0 ? dd_w_sum / n_tr : 0.0);
+        printf("[ TR WEIGHTS] (量级参考: 单差伪距 conf≈1/σ²≈0.5, 多普勒 conf≈0.5~1, 先验位置 1/3m≈0.33)\n");
         return true;
     }
 

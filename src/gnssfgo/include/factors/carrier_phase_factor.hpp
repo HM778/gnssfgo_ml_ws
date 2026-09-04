@@ -18,6 +18,15 @@
 using namespace gnss_comm;
 
 
+// tr_score∈[0,1] → 残差乘性权重: 0.1→≈19, 0.5→500, 1→≈993 (单位 1/米)
+// 供因子内部(T=ceres::Jet)与因子图日志(T=double)共用, 保证两边数值一致
+template <typename T>
+inline T trddcpConfWeight(T score)
+{
+    const T x = (score - T(0.5)) * T(10.0);  // 0→-5, 0.5→0, 1→5
+    return T(1.0) + (T(1.0) / (T(1.0) + exp(-x))) * T(999.0);
+}
+
 struct TRDDCPFactor
 {
     TRDDCPFactor(TRDDMeasurement dd_measurement,
@@ -124,17 +133,14 @@ struct TRDDCPFactor
                                           sigma_prev_i * sigma_prev_i +
                                           sigma_curr_master * sigma_curr_master +
                                           sigma_curr_i * sigma_curr_i);
-        // 10cm 下限: 吸收亚阈值周跳残留与载波多径爆发, 抑制收敛段瞬态;
-        // 相比旧实现 (0.20m 下限 + 简单平均) TDCP 仍有约 2 倍权重
+     
         const double sigma = std::max(0.10, sigma_dd);
 
-        if(1)
+        if(0)
         {
-            T x = T(sqrt_info - 0.09) * 10.0;  // 0→-5, 0.5→0, 1→5
-            T sigmoid = 1.0 / (1.0 + exp(-x));
-            // 再映射到 [1, 1000]
-            T conf = 1.0 + sigmoid * 999.0;
-            residuals[0] = T(est_dd_cp - dd_cp) * conf ;
+            // 权重由 tr_score 经 trddcpConfWeight 映射而来, 量级见函数注释;
+            // 注意: 这不是 1/σ 加权, 高程/SNR 的 sigma 模型仅保留在下方禁用分支中
+            residuals[0] = T(est_dd_cp - dd_cp) * trddcpConfWeight(T(sqrt_info));
         }
         else
         {
